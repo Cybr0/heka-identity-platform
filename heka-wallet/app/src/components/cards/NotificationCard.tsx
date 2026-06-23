@@ -2,7 +2,7 @@ import { useStore, EventTypes, BifoldError, Screens, Stacks } from '@bifold/core
 import { hitSlop } from '@bifold/core/src/constants'
 import { HomeStackParams } from '@bifold/core/src/types/navigators'
 import { CustomNotification } from '@bifold/core/src/types/notification'
-import { useAgent } from '@bifold/react-hooks'
+import { useOptionalAgent } from '@bifold/react-hooks'
 import { markProofAsViewed } from '@bifold/verifier'
 import { DidCommCredentialExchangeRecord, DidCommProofExchangeRecord, DidCommProofState } from '@credo-ts/didcomm'
 import { HekaTheme, useHekaTheme } from '@heka-wallet/shared'
@@ -201,7 +201,7 @@ const NotificationDeclineModal: React.FC<NotificationDeclineModalProps> = ({
   customNotification,
 }) => {
   const { t } = useTranslation()
-  const { agent } = useAgent()
+  const { agent } = useOptionalAgent()
 
   const [, dispatch] = useStore()
 

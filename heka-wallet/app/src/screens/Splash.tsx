@@ -1,7 +1,5 @@
-import { DispatchAction, Stacks, useAuth, useStore, TOKENS, EventTypes, BifoldError, useServices } from '@bifold/core'
+import { DispatchAction, useAuth, useStore, TOKENS, EventTypes, BifoldError, useServices } from '@bifold/core'
 import { DidCommHttpOutboundTransport, DidCommWsOutboundTransport } from '@credo-ts/didcomm'
-import { useNavigation } from '@react-navigation/core'
-import { CommonActions } from '@react-navigation/native'
 import React, { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DeviceEventEmitter } from 'react-native'
@@ -27,8 +25,6 @@ import {
 export const Splash: React.FC = () => {
   const { t } = useTranslation()
 
-  const navigation = useNavigation()
-
   const [store, dispatch] = useStore()
   const { agent, setAgent, setPublicDid } = useHekaAgent()
   const { getWalletSecret } = useAuth()
@@ -37,11 +33,22 @@ export const Splash: React.FC = () => {
 
   const [mounted, setMounted] = useState(false)
 
-  // navigation calls that occur before the screen is fully mounted will fail
-  // this useEffect prevents that race condition
+  // Defer agent initialization until the screen has mounted to avoid running it
+  // against a half-initialized component tree.
   useEffect(() => {
     setMounted(true)
   }, [])
+
+  // Heka does not use device attestation (config.enableAttestation = false).
+  // However, the agent-initialization onboarding step (isAgentInitializationComplete)
+  // requires attestation to be marked complete.
+  useEffect(() => {
+    if (!store.authentication.didAuthenticate || store.attestation.isAttestationComplete) {
+      return
+    }
+
+    dispatch({ type: DispatchAction.SET_ATTESTATION_COMPLETED, payload: [true] })
+  }, [store.authentication.didAuthenticate, store.attestation.isAttestationComplete, dispatch])
 
   useEffect(() => {
     if (
@@ -67,12 +74,8 @@ export const Splash: React.FC = () => {
           const isAgentRestarted = await tryRestartExistingAgent(agent, walletSecret)
 
           if (isAgentRestarted) {
-            navigation.dispatch(
-              CommonActions.reset({
-                index: 0,
-                routes: [{ name: Stacks.TabStack }],
-              })
-            )
+            // The onboarding workflow transitions to the main stack automatically once
+            // the agent is set — no navigation needed here.
             return
           }
         }
@@ -126,12 +129,8 @@ export const Splash: React.FC = () => {
         setAgent(newAgent)
         setPublicDid(publicDid)
 
-        navigation.dispatch(
-          CommonActions.reset({
-            index: 0,
-            routes: [{ name: Stacks.TabStack }],
-          })
-        )
+        // The onboarding workflow transitions to the main stack automatically once
+        // the agent is set — no navigation needed here.
       } catch (err: unknown) {
         const error = new BifoldError(
           t('Error.Title1045'),
@@ -148,7 +147,6 @@ export const Splash: React.FC = () => {
   }, [
     t,
     logger,
-    navigation,
     agent,
     dispatch,
     indyLedgers,
