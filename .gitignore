@@ -51,6 +51,7 @@ node_modules/
 
 # Intellij IDEs
 .idea
+.DS_Store
 
 # Yarn Berry (regenerated on install; keep .yarn/releases & .yarn/plugins tracked)
 **/.yarn/cache
