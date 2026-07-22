@@ -23,6 +23,10 @@ export class OpenId4VcVerificationSessionService {
     tenantAgent: TenantAgent,
     req: OpenId4VcVerificationSessionCreateRequestDto,
   ): Promise<OpenId4VcVerificationSessionCreateRequestResponse> {
+    if (!req.presentationExchange && !req.dcql) {
+      throw new UnprocessableEntityException('Either presentationExchange or dcql must be provided')
+    }
+
     const isDcApi = req.responseMode === 'dc_api' || req.responseMode === 'dc_api.jwt'
 
     let requestSigner: OpenId4VcJwtIssuerDid | { method: 'none' }

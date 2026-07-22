@@ -1,12 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { Type } from 'class-transformer'
-import { IsBoolean, IsNotEmpty, IsObject, IsOptional, IsString, ValidateNested } from 'class-validator'
+import { IsBoolean, IsEnum, IsNotEmpty, IsObject, IsOptional, IsString, ValidateNested } from 'class-validator'
 
 import { CredentialIssuer } from '../../issuance-sessions/dto/credential-offer.dto'
 
 import { DcqlQueryDto } from './dcql-query.dto'
 import { DifPresentationExchangeDefinitionV2 } from './presentation-exchange-definition.dto'
 import { OpenId4VcVerificationSessionRecordDto } from './verification-session.dto'
+
+export enum VerificationSessionVersion {
+  V1 = 'v1',
+  V1Draft21 = 'v1.draft21',
+  V1Draft24 = 'v1.draft24',
+}
 
 /**
  * @example
@@ -77,8 +83,8 @@ export class OpenId4VcVerificationSessionCreateRequestDto {
 
   @ApiPropertyOptional({ enum: ['v1', 'v1.draft21', 'v1.draft24'], default: 'v1.draft21' })
   @IsOptional()
-  @IsString()
-  public version?: 'v1' | 'v1.draft21' | 'v1.draft24'
+  @IsEnum(VerificationSessionVersion)
+  public version?: VerificationSessionVersion
 
   @ApiPropertyOptional({
     enum: ['direct_post', 'direct_post.jwt', 'dc_api', 'dc_api.jwt'],
