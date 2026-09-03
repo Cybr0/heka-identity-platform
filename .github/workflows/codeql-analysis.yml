@@ -21,7 +21,7 @@ on:
 
 # This allows a subsequently queued workflow run to interrupt previous runs
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   # Only supersede pull request runs. Pushes to `main` and the scheduled scan
   # must finish, otherwise the code scanning results for `main` go stale.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
