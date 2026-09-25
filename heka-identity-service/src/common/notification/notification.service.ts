@@ -1,6 +1,7 @@
 import { HttpService } from '@nestjs/axios'
 import { Inject, Injectable } from '@nestjs/common'
 import { ConfigType } from '@nestjs/config'
+import { isAxiosError } from 'axios'
 
 import { User } from 'common/entities'
 import { MessageDeliveryType } from 'common/entities/user.entity'
@@ -36,7 +37,10 @@ export class NotificationService {
     try {
       await this.sendNotification(user, notification)
     } catch (error) {
-      logger.error({ error, reason: deliveryFailureReason(error) }, 'Notification delivery failed')
+      logger.error(
+        { error: deliveryErrorForLog(error), reason: deliveryFailureReason(error) },
+        'Notification delivery failed',
+      )
       return false
     }
 
@@ -69,4 +73,10 @@ function deliveryFailureReason(error: unknown): string {
   if (code === 'ERR_CANCELED' || code === 'ECONNABORTED' || code === 'ETIMEDOUT') return 'timeout'
 
   return code ?? 'error'
+}
+
+/** Axios errors serialize their request config (URL, body); log only the fields needed for diagnosis. */
+function deliveryErrorForLog(error: unknown): unknown {
+  if (!isAxiosError(error)) return error
+  return { name: error.name, message: error.message, code: error.code, status: error.response?.status }
 }

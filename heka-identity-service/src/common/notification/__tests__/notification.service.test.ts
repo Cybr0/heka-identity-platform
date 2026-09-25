@@ -1,5 +1,6 @@
 import { createMock } from '@golevelup/ts-vitest'
 import { HttpService } from '@nestjs/axios'
+import { AxiosError } from 'axios'
 
 import { MessageDeliveryType, User } from 'common/entities'
 import { Logger } from 'common/logger'
@@ -103,6 +104,58 @@ describe('NotificationService', () => {
     post.mockRejectedValue(Object.assign(new Error('canceled'), { code: 'ERR_CANCELED' }))
 
     await expect(notificationService.trySendNotification(user, notification)).resolves.toBe(false)
+  })
+
+  // The credential policy only rejects userinfo; secrets in the path or query are accepted and
+  // must not reach the failure record through the Axios error's serialized request config.
+  test('logs a failed HTTP delivery without the webhook URL', async () => {
+    const webHook = 'https://hooks.example.com/services/T0/B0/s3cretPathToken?token=abc'
+    const user = new User({ id: '11', messageDeliveryType: MessageDeliveryType.WebHook, webHook })
+    post.mockRejectedValue(
+      new AxiosError(
+        'Request failed with status code 500',
+        'ERR_BAD_RESPONSE',
+        { url: webHook, data: '{}' } as never,
+        undefined,
+        { status: 500 } as never,
+      ),
+    )
+
+    await expect(notificationService.trySendNotification(user, notification)).resolves.toBe(false)
+
+    expect(childLogger.error).toHaveBeenCalledWith(
+      {
+        error: {
+          name: 'AxiosError',
+          message: 'Request failed with status code 500',
+          code: 'ERR_BAD_RESPONSE',
+          status: 500,
+        },
+        reason: 'ERR_BAD_RESPONSE',
+      },
+      'Notification delivery failed',
+    )
+    const serialized = JSON.stringify(vi.mocked(childLogger.error).mock.calls)
+    expect(serialized).not.toContain('s3cretPathToken')
+    expect(serialized).not.toContain('token=abc')
+    expect(serialized).not.toContain('/services/T0/B0')
+  })
+
+  test('logs a failed HTTP delivery without a response with an undefined status', async () => {
+    const webHook = 'https://hooks.example.com/notify?token=abc'
+    const user = new User({ id: '11', messageDeliveryType: MessageDeliveryType.WebHook, webHook })
+    post.mockRejectedValue(new AxiosError('connect ECONNREFUSED', 'ECONNREFUSED', { url: webHook } as never))
+
+    await expect(notificationService.trySendNotification(user, notification)).resolves.toBe(false)
+
+    expect(childLogger.error).toHaveBeenCalledWith(
+      {
+        error: { name: 'AxiosError', message: 'connect ECONNREFUSED', code: 'ECONNREFUSED', status: undefined },
+        reason: 'ECONNREFUSED',
+      },
+      'Notification delivery failed',
+    )
+    expect(JSON.stringify(vi.mocked(childLogger.error).mock.calls)).not.toContain('token=abc')
   })
 
   test('uses the WebSocket gateway and skips the egress policy for non-webhook users', async () => {
