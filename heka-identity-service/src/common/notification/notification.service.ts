@@ -27,7 +27,11 @@ export class NotificationService {
   }
 
   public async trySendNotification(user: User, notification: NotificationDto): Promise<boolean> {
-    const logger = this.logger.child('trySendNotification', { user, notification })
+    // Bind identifiers only: the entity carries the webhook URL, which can embed secrets.
+    const logger = this.logger.child('trySendNotification', {
+      user: { id: user.id, messageDeliveryType: user.messageDeliveryType },
+      notification,
+    })
 
     try {
       await this.sendNotification(user, notification)

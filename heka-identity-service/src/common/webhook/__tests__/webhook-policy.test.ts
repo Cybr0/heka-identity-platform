@@ -1,3 +1,5 @@
+import type { LookupAddress } from 'node:dns'
+
 import dns from 'node:dns/promises'
 
 import {
@@ -9,6 +11,29 @@ import {
 
 const DEFAULT = { allowPrivateAddresses: false } as const
 const PERMISSIVE = { allowPrivateAddresses: true } as const
+
+const DNS_TIMEOUT_MS = 5_000
+const MAX_CONCURRENT_DNS_LOOKUPS = 2
+const PUBLIC_ANSWER: LookupAddress[] = [{ address: '142.251.209.206', family: 4 }]
+
+type PendingLookup = Readonly<{
+  resolve: (answers: LookupAddress[]) => void
+  reject: (error: Error) => void
+}>
+
+/**
+ * Lookups that only settle when the test says so. The concurrency limiter is module state, so every
+ * pending lookup is settled after each test to hand its slot back.
+ */
+const pendingLookups: PendingLookup[] = []
+
+function mockControllableLookup() {
+  return vi
+    .spyOn(dns, 'lookup')
+    .mockImplementation(
+      (() => new Promise<LookupAddress[]>((resolve, reject) => pendingLookups.push({ resolve, reject }))) as never,
+    )
+}
 
 describe('addressIsBlockedForWebhook', () => {
   describe('IPv4', () => {
@@ -107,9 +132,12 @@ describe('hostnameIsBlockedForWebhook', () => {
 })
 
 describe('resolveValidatedWebhookAddresses', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
+  afterEach(async () => {
+    for (const { resolve } of pendingLookups.splice(0)) resolve(PUBLIC_ANSWER)
     vi.useRealTimers()
+    // Let the released slots propagate before the next test runs.
+    await new Promise((resolve) => setImmediate(resolve))
+    vi.restoreAllMocks()
   })
 
   test('rejects a blocked IPv4 literal without touching DNS', async () => {
@@ -189,12 +217,149 @@ describe('resolveValidatedWebhookAddresses', () => {
 
   test('maps a hanging DNS resolution to TIMEOUT', async () => {
     vi.useFakeTimers()
-    vi.spyOn(dns, 'lookup').mockReturnValue(new Promise(() => undefined) as never)
+    mockControllableLookup()
 
     const pending = resolveValidatedWebhookAddresses('slow.example.com', DEFAULT)
     const assertion = expect(pending).rejects.toMatchObject({ policyCode: 'TIMEOUT' })
 
-    await vi.advanceTimersByTimeAsync(5_000)
+    await vi.advanceTimersByTimeAsync(DNS_TIMEOUT_MS)
     await assertion
+  })
+
+  describe('concurrency limit', () => {
+    test('never runs more than the limit of lookups and times out callers still waiting for a slot', async () => {
+      vi.useFakeTimers()
+      const lookup = mockControllableLookup()
+
+      const callers = Array.from({ length: MAX_CONCURRENT_DNS_LOOKUPS + 1 }, (_, i) =>
+        resolveValidatedWebhookAddresses(`slow-${i}.example.com`, DEFAULT),
+      )
+      const assertions = callers.map((caller) => expect(caller).rejects.toMatchObject({ policyCode: 'TIMEOUT' }))
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(lookup).toHaveBeenCalledTimes(MAX_CONCURRENT_DNS_LOOKUPS)
+
+      await vi.advanceTimersByTimeAsync(DNS_TIMEOUT_MS)
+      await Promise.all(assertions)
+      // The queued caller gave up without ever starting a lookup.
+      expect(lookup).toHaveBeenCalledTimes(MAX_CONCURRENT_DNS_LOOKUPS)
+    })
+
+    test('keeps a slot occupied after its caller timed out until the lookup itself settles', async () => {
+      vi.useFakeTimers()
+      const lookup = mockControllableLookup()
+
+      const timedOut = Array.from({ length: MAX_CONCURRENT_DNS_LOOKUPS }, (_, i) =>
+        expect(resolveValidatedWebhookAddresses(`slow-${i}.example.com`, DEFAULT)).rejects.toMatchObject({
+          policyCode: 'TIMEOUT',
+        }),
+      )
+      await vi.advanceTimersByTimeAsync(DNS_TIMEOUT_MS)
+      await Promise.all(timedOut)
+
+      const next = resolveValidatedWebhookAddresses('hooks.example.com', DEFAULT)
+      await vi.advanceTimersByTimeAsync(DNS_TIMEOUT_MS / 2)
+      expect(lookup).toHaveBeenCalledTimes(MAX_CONCURRENT_DNS_LOOKUPS)
+
+      // The abandoned OS lookup finally returns: its slot goes to the waiting caller.
+      pendingLookups[0].resolve(PUBLIC_ANSWER)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(lookup).toHaveBeenCalledTimes(MAX_CONCURRENT_DNS_LOOKUPS + 1)
+      expect(lookup).toHaveBeenLastCalledWith('hooks.example.com', { all: true })
+
+      pendingLookups[MAX_CONCURRENT_DNS_LOOKUPS].resolve(PUBLIC_ANSWER)
+      await expect(next).resolves.toEqual(PUBLIC_ANSWER)
+    })
+
+    test('releases the slot when a lookup fails after its caller timed out', async () => {
+      vi.useFakeTimers()
+      const lookup = mockControllableLookup()
+
+      const timedOut = Array.from({ length: MAX_CONCURRENT_DNS_LOOKUPS }, (_, i) =>
+        expect(resolveValidatedWebhookAddresses(`slow-${i}.example.com`, DEFAULT)).rejects.toMatchObject({
+          policyCode: 'TIMEOUT',
+        }),
+      )
+      await vi.advanceTimersByTimeAsync(DNS_TIMEOUT_MS)
+      await Promise.all(timedOut)
+
+      // A late failure must neither surface as an unhandled rejection nor leak the slot.
+      pendingLookups[0].reject(Object.assign(new Error('timeout'), { code: 'EAI_AGAIN' }))
+      await vi.advanceTimersByTimeAsync(0)
+
+      const next = resolveValidatedWebhookAddresses('hooks.example.com', DEFAULT)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(lookup).toHaveBeenCalledTimes(MAX_CONCURRENT_DNS_LOOKUPS + 1)
+
+      pendingLookups[MAX_CONCURRENT_DNS_LOOKUPS].resolve(PUBLIC_ANSWER)
+      await expect(next).resolves.toEqual(PUBLIC_ANSWER)
+    })
+
+    test('a caller that gave up while queued does not consume a slot', async () => {
+      vi.useFakeTimers()
+      const lookup = mockControllableLookup()
+
+      const callers = Array.from({ length: MAX_CONCURRENT_DNS_LOOKUPS + 1 }, (_, i) =>
+        resolveValidatedWebhookAddresses(`slow-${i}.example.com`, DEFAULT),
+      )
+      const assertions = callers.map((caller) => expect(caller).rejects.toMatchObject({ policyCode: 'TIMEOUT' }))
+      await vi.advanceTimersByTimeAsync(DNS_TIMEOUT_MS)
+      await Promise.all(assertions)
+
+      pendingLookups[0].resolve(PUBLIC_ANSWER)
+      await vi.advanceTimersByTimeAsync(0)
+      // The abandoned waiter was not granted the freed slot.
+      expect(lookup).toHaveBeenCalledTimes(MAX_CONCURRENT_DNS_LOOKUPS)
+
+      const next = resolveValidatedWebhookAddresses('hooks.example.com', DEFAULT)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(lookup).toHaveBeenCalledTimes(MAX_CONCURRENT_DNS_LOOKUPS + 1)
+
+      pendingLookups[MAX_CONCURRENT_DNS_LOOKUPS].resolve(PUBLIC_ANSWER)
+      await expect(next).resolves.toEqual(PUBLIC_ANSWER)
+    })
+
+    test('a queued caller proceeds as soon as a running lookup completes', async () => {
+      vi.useFakeTimers()
+      const lookup = mockControllableLookup()
+
+      const running = Array.from({ length: MAX_CONCURRENT_DNS_LOOKUPS }, (_, i) =>
+        resolveValidatedWebhookAddresses(`busy-${i}.example.com`, DEFAULT),
+      )
+      const queued = resolveValidatedWebhookAddresses('hooks.example.com', DEFAULT)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(lookup).toHaveBeenCalledTimes(MAX_CONCURRENT_DNS_LOOKUPS)
+
+      pendingLookups[0].resolve(PUBLIC_ANSWER)
+      await expect(running[0]).resolves.toEqual(PUBLIC_ANSWER)
+      expect(lookup).toHaveBeenCalledTimes(MAX_CONCURRENT_DNS_LOOKUPS + 1)
+
+      pendingLookups[MAX_CONCURRENT_DNS_LOOKUPS].resolve(PUBLIC_ANSWER)
+      await expect(queued).resolves.toEqual(PUBLIC_ANSWER)
+
+      pendingLookups[1].resolve(PUBLIC_ANSWER)
+      await expect(running[1]).resolves.toEqual(PUBLIC_ANSWER)
+    })
+
+    test('IP literals and blocked hostnames bypass the limiter even when every slot is busy', async () => {
+      vi.useFakeTimers()
+      const lookup = mockControllableLookup()
+
+      const running = Array.from({ length: MAX_CONCURRENT_DNS_LOOKUPS }, (_, i) =>
+        resolveValidatedWebhookAddresses(`busy-${i}.example.com`, DEFAULT),
+      )
+      await vi.advanceTimersByTimeAsync(0)
+
+      await expect(resolveValidatedWebhookAddresses('1.1.1.1', DEFAULT)).resolves.toEqual([
+        { address: '1.1.1.1', family: 4 },
+      ])
+      await expect(resolveValidatedWebhookAddresses('x.internal', DEFAULT)).rejects.toMatchObject({
+        policyCode: 'HOST',
+      })
+      expect(lookup).toHaveBeenCalledTimes(MAX_CONCURRENT_DNS_LOOKUPS)
+
+      for (const { resolve } of pendingLookups.splice(0)) resolve(PUBLIC_ANSWER)
+      await expect(Promise.all(running)).resolves.toHaveLength(MAX_CONCURRENT_DNS_LOOKUPS)
+    })
   })
 })

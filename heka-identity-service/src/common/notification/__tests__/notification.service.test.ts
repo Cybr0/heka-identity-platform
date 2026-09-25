@@ -15,6 +15,8 @@ describe('NotificationService', () => {
   let webhookEgress: WebhookEgressService
   let notificationGateway: NotificationGateway
   let notificationService: NotificationService
+  let childLogger: Logger
+  let child: ReturnType<typeof vi.fn>
 
   const notification = { type: 'ConnectionStateChanged' } as unknown as NotificationDto
 
@@ -24,13 +26,15 @@ describe('NotificationService', () => {
     webhookEgress = createMock<WebhookEgressService>()
     vi.mocked(webhookEgress.assertCallbackUrlAllowed).mockResolvedValue(undefined)
     notificationGateway = createMock<NotificationGateway>()
+    childLogger = createMock<Logger>()
+    child = vi.fn().mockReturnValue(childLogger)
 
     notificationService = new NotificationService(
       httpService,
       webhookEgress,
       notificationGateway,
       { allowHttp: false, allowPrivateAddresses: false, timeoutMs: 10_000 },
-      createMock<Logger>({ child: () => createMock<Logger>() }),
+      createMock<Logger>({ child }),
     )
   })
 
@@ -61,6 +65,36 @@ describe('NotificationService', () => {
 
     await expect(notificationService.trySendNotification(user, notification)).resolves.toBe(false)
 
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  // The user entity carries the webhook URL, which may embed credentials or tokens; only
+  // identifiers may reach the log context of the failure record.
+  test('logs a rejected delivery without the webhook URL', async () => {
+    const webHook = 'https://alice:s3cret@hooks.example.com/notify?token=abc'
+    const user = new User({ id: '11', messageDeliveryType: MessageDeliveryType.WebHook, webHook })
+    vi.mocked(webhookEgress.assertCallbackUrlAllowed).mockRejectedValue(
+      new WebhookTargetPolicyError('CREDENTIALS', 'Webhook URL must not include credentials'),
+    )
+
+    await expect(notificationService.trySendNotification(user, notification)).resolves.toBe(false)
+
+    const bindingCall = child.mock.calls.find(([context]) => context === 'trySendNotification')
+    expect(bindingCall).toBeDefined()
+    const bindings = bindingCall![1] as Record<string, unknown>
+    expect(bindings).toEqual({
+      user: { id: '11', messageDeliveryType: MessageDeliveryType.WebHook },
+      notification,
+    })
+    const serialized = JSON.stringify(bindings)
+    expect(serialized).not.toContain(webHook)
+    expect(serialized).not.toContain('s3cret')
+    expect(serialized).not.toContain('hooks.example.com')
+
+    expect(childLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'policy:CREDENTIALS' }),
+      'Notification delivery failed',
+    )
     expect(post).not.toHaveBeenCalled()
   })
 

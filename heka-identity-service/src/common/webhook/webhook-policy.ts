@@ -1,10 +1,25 @@
+import type { LookupAddress } from 'node:dns'
+
 import dns from 'node:dns/promises'
 import { isIP } from 'node:net'
 
 import ipaddr from 'ipaddr.js'
 
-/** Cap for resolving a webhook hostname while validating a callback URL (the HTTP timeout covers the send path). */
+/**
+ * How long a caller waits for a webhook hostname to resolve, including the wait for a lookup slot.
+ * It bounds the caller only: `dns.lookup` cannot be cancelled, so the lookup itself keeps running.
+ */
 const DNS_RESOLUTION_TIMEOUT_MS = 5_000
+
+/**
+ * `dns.lookup` runs `getaddrinfo(3)` on libuv's shared threadpool (4 threads by default) and cannot be
+ * cancelled. Capping concurrent webhook lookups keeps slow or malicious DNS from occupying the whole pool;
+ * a slot is freed only when the underlying lookup settles, not when its caller gives up.
+ */
+const MAX_CONCURRENT_DNS_LOOKUPS = 2
+
+let inFlightLookups = 0
+const lookupWaiters: Array<() => void> = []
 
 /** Hostnames that commonly resolve to internal infrastructure regardless of what DNS answers. */
 const RESERVED_HOSTS = new Set([
@@ -98,7 +113,7 @@ export async function resolveValidatedWebhookAddresses(
 
   let resolved: WebhookAddress[]
   try {
-    const answers = await withDnsTimeout(dns.lookup(host, { all: true }))
+    const answers = await boundedLookup(host)
     resolved = answers.map(({ address, family }) => ({ address, family: family === 6 ? 6 : 4 }) as const)
   } catch (error: unknown) {
     if (error instanceof WebhookTargetPolicyError) throw error
@@ -137,21 +152,79 @@ export function createWebhookLookup(policy: WebhookAddressPolicy): WebhookLookup
   }
 }
 
-async function withDnsTimeout<T>(promise: Promise<T>): Promise<T> {
-  let timer: NodeJS.Timeout | undefined
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new WebhookTargetPolicyError('TIMEOUT', 'Webhook DNS lookup timed out')),
-          DNS_RESOLUTION_TIMEOUT_MS,
-        )
-      }),
-    ])
-  } finally {
-    if (timer) clearTimeout(timer)
+/** Hands a freed slot to the next queued lookup, or returns it to the pool when nobody is waiting. */
+function releaseLookupSlot(): void {
+  const next = lookupWaiters.shift()
+  if (next) {
+    next()
+    return
   }
+  inFlightLookups -= 1
+}
+
+/**
+ * Resolves `host` through the system resolver once a lookup slot is free. A single deadline covers both the
+ * wait for a slot and the lookup; on expiry the caller gets `TIMEOUT` while an already started lookup keeps
+ * its slot until it settles.
+ */
+function boundedLookup(host: string): Promise<LookupAddress[]> {
+  return new Promise<LookupAddress[]>((resolve, reject) => {
+    let settled = false
+
+    const start = () => {
+      // Defensive: a waiter removed on timeout is never granted, but never hold a slot for a gone caller.
+      if (settled) {
+        releaseLookupSlot()
+        return
+      }
+
+      let lookup: Promise<LookupAddress[]>
+      try {
+        lookup = dns.lookup(host, { all: true })
+      } catch (error: unknown) {
+        releaseLookupSlot()
+        settled = true
+        clearTimeout(timer)
+        reject(error instanceof Error ? error : new Error(String(error)))
+        return
+      }
+
+      // Tied to the OS call, not to the caller: this is what bounds threadpool usage.
+      void lookup.then(
+        () => releaseLookupSlot(),
+        () => releaseLookupSlot(),
+      )
+      lookup.then(
+        (answers) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          resolve(answers)
+        },
+        (error: Error) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          reject(error)
+        },
+      )
+    }
+
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      const waiting = lookupWaiters.indexOf(start)
+      if (waiting !== -1) lookupWaiters.splice(waiting, 1)
+      reject(new WebhookTargetPolicyError('TIMEOUT', 'Webhook DNS lookup timed out'))
+    }, DNS_RESOLUTION_TIMEOUT_MS)
+
+    if (inFlightLookups < MAX_CONCURRENT_DNS_LOOKUPS) {
+      inFlightLookups += 1
+      start()
+    } else {
+      lookupWaiters.push(start)
+    }
+  })
 }
 
 const LOOKUP_ERROR_CODES: Partial<Record<WebhookPolicyCode, string>> = {
