@@ -230,8 +230,10 @@ The defaults of the following variables are development/test credentials that ar
 
 At startup the service checks whether any of these is unset, empty, or still equal to its default:
 
-- without `NODE_ENV=production` a warning naming the affected variables is logged and the service starts (local development);
-- with `NODE_ENV=production` the service **refuses to start** and lists the variables that must be set.
+- when `NODE_ENV` is unset, empty, `development` or `test` (case-insensitive, surrounding whitespace ignored), a warning naming the affected variables is logged and the service starts (local development and tests);
+- with any other `NODE_ENV` value, including `production` in any casing, typos such as `prod`, or custom names such as `staging`, the service **refuses to start** and lists the variables that must be set.
+
+Real deployments should set `NODE_ENV=production` explicitly: an unset `NODE_ENV` is treated as local development and only produces the warning.
 
 ### HTTP server (Express)
 
@@ -351,11 +353,11 @@ Required when issuing `mso_mdoc` credentials (mobile driving licences and simila
 
 ### Logging
 
-| Variable                | Default            | Description                                                                                                                                                      |
-| ----------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PINO_LEVEL`            | `info`             | Logger level. One of `trace`, `debug`, `info`, `warn`, `error`, `fatal`.                                                                                         |
-| `PINO_FILE_DESTINATION` | _(unset — stdout)_ | Path to write logs to instead of stdout.                                                                                                                         |
-| `NODE_ENV`              | _(unset)_          | When set to `production`, switches the logger to non-pretty JSON output and refuses to start with [insecure default credentials](#security-sensitive-variables). |
+| Variable                | Default            | Description                                                                                                                                                                                                                                                   |
+| ----------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PINO_LEVEL`            | `info`             | Logger level. One of `trace`, `debug`, `info`, `warn`, `error`, `fatal`.                                                                                                                                                                                      |
+| `PINO_FILE_DESTINATION` | _(unset — stdout)_ | Path to write logs to instead of stdout.                                                                                                                                                                                                                      |
+| `NODE_ENV`              | _(unset)_          | When set to exactly `production`, switches the logger to non-pretty JSON output. Any value other than unset, `development` or `test` (case-insensitive) makes the service refuse to start with [insecure default credentials](#security-sensitive-variables). |
 
 ### Health
 

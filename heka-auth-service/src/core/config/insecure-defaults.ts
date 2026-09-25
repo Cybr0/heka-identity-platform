@@ -24,8 +24,28 @@ export function findInsecureDefaults(env: Record<string, unknown>): InsecureDefa
   })
 }
 
+// NODE_ENV values under which publicly known defaults only produce a warning (compared after
+// trimming and lowercasing). An unset or empty NODE_ENV is treated as development, matching the
+// existing convention in heka-auth-service/src/common/utils/environment.utils.ts. Any other value,
+// including typos or custom names such as "staging", is treated as production (fail closed).
+const NON_PRODUCTION_NODE_ENVS = ['development', 'test']
+
+// Returns `undefined` for a non-string value, which is unexpected from the environment and therefore not allowlisted.
+function normalizeNodeEnv(nodeEnv: unknown): string | undefined {
+  if (nodeEnv === undefined || nodeEnv === null) return ''
+  return typeof nodeEnv === 'string' ? nodeEnv.trim().toLowerCase() : undefined
+}
+
+function isNonProductionEnv(normalizedNodeEnv: string | undefined): boolean {
+  return (
+    normalizedNodeEnv !== undefined &&
+    (normalizedNodeEnv === '' || NON_PRODUCTION_NODE_ENVS.includes(normalizedNodeEnv))
+  )
+}
+
 /**
- * Warns when publicly known default values are in use, and refuses to start when `NODE_ENV=production`.
+ * Warns when publicly known default values are in use, and refuses to start unless `NODE_ENV`
+ * is unset, empty, `development` or `test` (case-insensitive). Any other value is treated as production.
  * Called from the `validate` hook of the ConfigModule.
  */
 export function assertSecureConfiguration(env: Record<string, unknown>): void {
@@ -34,11 +54,19 @@ export function assertSecureConfiguration(env: Record<string, unknown>): void {
 
   const summary = `Insecure configuration: ${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} unset or use publicly known default values.`
 
-  if (env.NODE_ENV === 'production') {
-    throw new Error(`${summary} Set these environment variables explicitly before running in production.`)
+  const nodeEnv = normalizeNodeEnv(env.NODE_ENV)
+  if (!isNonProductionEnv(nodeEnv)) {
+    // The NODE_ENV value itself is not echoed, so the message only ever contains variable names.
+    const unrecognized =
+      nodeEnv === 'production'
+        ? ''
+        : ' NODE_ENV is set to a value other than development or test, so it is treated as production.'
+    throw new Error(
+      `${summary}${unrecognized} Set these environment variables explicitly before running in production.`,
+    )
   }
 
   new Logger('Config').warn(
-    `${summary} This is acceptable for local development only; the service will refuse to start with NODE_ENV=production.`,
+    `${summary} This is acceptable for local development only; the service will refuse to start when NODE_ENV is set to anything other than development or test.`,
   )
 }

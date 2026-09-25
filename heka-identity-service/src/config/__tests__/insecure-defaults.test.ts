@@ -22,6 +22,15 @@ const secureEnv: Record<string, string> = {
   FILE_STORAGE_MINIO_SECRET_KEY: 'minio-secret',
 }
 
+function thrownMessage(fn: () => void): string {
+  try {
+    fn()
+  } catch (error) {
+    return (error as Error).message
+  }
+  throw new Error('Expected the function to throw')
+}
+
 describe('insecure defaults', () => {
   describe('parseDidMethods', () => {
     it('falls back to the default DID methods when DID_METHODS is not set', () => {
@@ -125,13 +134,64 @@ describe('insecure defaults', () => {
       expect(warnSpy).not.toHaveBeenCalled()
     })
 
-    it.each([undefined, 'development', 'test'])('only warns outside production (NODE_ENV=%s)', (nodeEnv) => {
-      const env: Record<string, unknown> = { ...secureEnv, JWT_SECRET: 'test', HEDERA_OPERATOR_KEY: '' }
-      if (nodeEnv !== undefined) env.NODE_ENV = nodeEnv
+    it.each([undefined, '', '  ', 'development', 'test', 'Development', ' TEST '])(
+      'only warns outside production (NODE_ENV=%j)',
+      (nodeEnv) => {
+        const env: Record<string, unknown> = { ...secureEnv, JWT_SECRET: 'test', HEDERA_OPERATOR_KEY: '' }
+        if (nodeEnv !== undefined) env.NODE_ENV = nodeEnv
 
-      expect(() => assertSecureConfiguration(env)).not.toThrow()
-      expect(warnSpy).toHaveBeenCalledTimes(1)
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/JWT_SECRET, HEDERA_OPERATOR_KEY/))
+        expect(() => assertSecureConfiguration(env)).not.toThrow()
+        expect(warnSpy).toHaveBeenCalledTimes(1)
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/JWT_SECRET, HEDERA_OPERATOR_KEY/))
+      },
+    )
+
+    it.each(['production', 'Production', ' PRODUCTION ', 'prod', 'prodution', 'staging', 'dev'])(
+      'fails closed for any other NODE_ENV (NODE_ENV=%j)',
+      (nodeEnv) => {
+        const env = { ...secureEnv, NODE_ENV: nodeEnv, JWT_SECRET: 'test', MIKRO_ORM_PASSWORD: '' }
+
+        expect(() => assertSecureConfiguration(env)).toThrow(/JWT_SECRET, MIKRO_ORM_PASSWORD/)
+        expect(warnSpy).not.toHaveBeenCalled()
+      },
+    )
+
+    it('explains when an unrecognized NODE_ENV is treated as production', () => {
+      expect(() => assertSecureConfiguration({ ...secureEnv, NODE_ENV: 'staging', JWT_SECRET: 'test' })).toThrow(
+        /NODE_ENV is set to a value other than development or test, so it is treated as production/,
+      )
+      expect(
+        thrownMessage(() => assertSecureConfiguration({ ...secureEnv, NODE_ENV: ' Production ', JWT_SECRET: 'test' })),
+      ).not.toContain('treated as production')
+    })
+
+    it('does nothing for a secure configuration under an unrecognized NODE_ENV', () => {
+      expect(() => assertSecureConfiguration({ ...secureEnv, NODE_ENV: 'staging' })).not.toThrow()
+      expect(warnSpy).not.toHaveBeenCalled()
+    })
+
+    it('never includes secret or NODE_ENV values in the error or warning', () => {
+      // Every checked variable is left at its publicly known default (MinIO enabled, all ledgers enabled).
+      const env: Record<string, unknown> = {
+        ...INSECURE_DEFAULTS,
+        DID_METHODS: 'indy,indybesu,hedera',
+        FILE_STORAGE_TARGET: 'minio',
+        NODE_ENV: 'staging-xyz',
+      }
+      const secretValues = Object.values(INSECURE_DEFAULTS).filter((value) => value !== 'test')
+
+      const message = thrownMessage(() => assertSecureConfiguration(env))
+      expect(message).toMatch(/JWT_SECRET, MIKRO_ORM_PASSWORD/)
+      expect(message).not.toContain('staging-xyz')
+      // The JWT_SECRET default (`test`) also occurs in the policy wording, so check no `NAME=value` is echoed.
+      expect(message).not.toMatch(/[A-Z_]+\s*[=:]/)
+      for (const value of secretValues) expect(message).not.toContain(value)
+
+      assertSecureConfiguration({ ...env, NODE_ENV: 'development' })
+      const warning = String(warnSpy.mock.calls[0][0])
+      expect(warning).toMatch(/JWT_SECRET, MIKRO_ORM_PASSWORD/)
+      expect(warning).not.toMatch(/[A-Z_]+\s*[=:]/)
+      for (const value of secretValues) expect(warning).not.toContain(value)
     })
   })
 
