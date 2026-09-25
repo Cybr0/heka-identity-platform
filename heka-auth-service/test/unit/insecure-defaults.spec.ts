@@ -123,6 +123,7 @@ describe('insecure defaults', () => {
       assertSecureConfiguration({ ...env, NODE_ENV: 'development' })
       const warning = String(warnSpy.mock.calls[0][0])
       expect(warning).toMatch(/JWT_SECRET, DB_PASSWORD/)
+      expect(warning).toContain('unset, empty, development or test')
       expect(warning).not.toContain('heka1')
       expect(warning).not.toMatch(/[A-Z_]+\s*[=:]/)
     })

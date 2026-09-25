@@ -54,7 +54,7 @@ export function validate(configuration: Record<string, any>): Config {
     throw new Error(`\n${errors.map((err) => err.toString(false, true, err.target?.constructor.name, true)).join('')}`)
   }
 
-  // Warns about publicly known default secrets and refuses to start unless NODE_ENV is unset, development or test
+  // Warns about publicly known default secrets and refuses to start unless NODE_ENV is unset, empty, development or test
   assertSecureConfiguration(configuration)
 
   return config

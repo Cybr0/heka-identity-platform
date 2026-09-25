@@ -24,7 +24,7 @@ import { MikroOrmMiddleware } from './mikro-orm'
     ConfigModule.forRoot({
       isGlobal: true,
       load: config,
-      // Warns about publicly known default secrets and refuses to start unless NODE_ENV is unset, development or test.
+      // Warns about publicly known default secrets and refuses to start unless NODE_ENV is unset, empty, development or test.
       // Returns the env record unchanged so `.env` values are still assigned to `process.env`.
       validate: (env) => {
         assertSecureConfiguration(env)

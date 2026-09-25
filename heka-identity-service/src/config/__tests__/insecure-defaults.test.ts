@@ -190,6 +190,7 @@ describe('insecure defaults', () => {
       assertSecureConfiguration({ ...env, NODE_ENV: 'development' })
       const warning = String(warnSpy.mock.calls[0][0])
       expect(warning).toMatch(/JWT_SECRET, MIKRO_ORM_PASSWORD/)
+      expect(warning).toContain('unset, empty, development or test')
       expect(warning).not.toMatch(/[A-Z_]+\s*[=:]/)
       for (const value of secretValues) expect(warning).not.toContain(value)
     })

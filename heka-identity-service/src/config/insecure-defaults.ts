@@ -104,6 +104,6 @@ export function assertSecureConfiguration(env: Record<string, unknown>): void {
   }
 
   new Logger('Config').warn(
-    `${summary} This is acceptable for local development only; the service will refuse to start when NODE_ENV is set to anything other than development or test.`,
+    `${summary} This is acceptable for local development only; the service will refuse to start unless NODE_ENV is unset, empty, development or test (case-insensitive).`,
   )
 }
