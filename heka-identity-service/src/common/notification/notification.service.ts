@@ -75,8 +75,16 @@ function deliveryFailureReason(error: unknown): string {
   return code ?? 'error'
 }
 
-/** Axios errors serialize their request config (URL, body); log only the fields needed for diagnosis. */
-function deliveryErrorForLog(error: unknown): unknown {
-  if (!isAxiosError(error)) return error
-  return { name: error.name, message: error.message, code: error.code, status: error.response?.status }
+/**
+ * Raw delivery errors can carry the webhook URL (Axios errors serialize their request config; Node's
+ * ERR_INVALID_URL keeps the rejected string in `input`), so log only the fields needed for diagnosis.
+ */
+function deliveryErrorForLog(error: unknown): Record<string, unknown> {
+  if (isAxiosError(error)) {
+    return { name: error.name, message: error.message, code: error.code, status: error.response?.status }
+  }
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message, code: (error as NodeJS.ErrnoException).code }
+  }
+  return { type: typeof error }
 }

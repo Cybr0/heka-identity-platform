@@ -30,6 +30,20 @@ describe('WebhookEgressService', () => {
     await expect(build().assertCallbackUrlAllowed('not a url')).rejects.toMatchObject({ policyCode: 'URL' })
   })
 
+  // The stored string is sent as-is, so it must be validated as-is: String#trim strips Unicode
+  // whitespace that the HTTP client's URL parser rejects.
+  test.each([
+    '\u00a0https://hooks.example.com/notify',
+    '\ufeffhttps://hooks.example.com/notify',
+    'https://hooks.example.com\u00a0',
+  ])('rejects a URL the HTTP client cannot parse (%j)', async (url: string) => {
+    await expect(build().assertCallbackUrlAllowed(url)).rejects.toMatchObject({ policyCode: 'URL' })
+  })
+
+  test('accepts a URL padded with ASCII whitespace', async () => {
+    await expect(build().assertCallbackUrlAllowed('  https://hooks.example.com/notify  ')).resolves.toBeUndefined()
+  })
+
   test.each(['ftp://hooks.example.com', 'file:///etc/passwd', 'gopher://hooks.example.com'])(
     'rejects the %s scheme',
     async (url: string) => {

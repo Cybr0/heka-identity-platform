@@ -96,6 +96,16 @@ describe('NotificationService', () => {
       expect.objectContaining({ reason: 'policy:CREDENTIALS' }),
       'Notification delivery failed',
     )
+    expect(childLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: {
+          name: 'WebhookTargetPolicyError',
+          message: 'Webhook URL must not include credentials',
+          code: undefined,
+        },
+      }),
+      'Notification delivery failed',
+    )
     expect(post).not.toHaveBeenCalled()
   })
 
@@ -153,6 +163,49 @@ describe('NotificationService', () => {
         error: { name: 'AxiosError', message: 'connect ECONNREFUSED', code: 'ECONNREFUSED', status: undefined },
         reason: 'ECONNREFUSED',
       },
+      'Notification delivery failed',
+    )
+    expect(JSON.stringify(vi.mocked(childLogger.error).mock.calls)).not.toContain('token=abc')
+  })
+
+  // axios parses the URL outside its error wrapping, so an unparseable URL rejects with Node's raw
+  // ERR_INVALID_URL TypeError, which keeps the full URL in its enumerable `input` property.
+  test('logs a failed delivery with an unparseable URL without the URL', async () => {
+    const webHook = '\u00a0https://hooks.example.com/services/T0/B0/s3cretPathToken?token=abc'
+    const invalidUrl = (() => {
+      try {
+        new URL(webHook)
+      } catch (error) {
+        return error
+      }
+    })()
+    expect(invalidUrl).toBeDefined()
+    const user = new User({ id: '11', messageDeliveryType: MessageDeliveryType.WebHook, webHook })
+    post.mockRejectedValue(invalidUrl)
+
+    await expect(notificationService.trySendNotification(user, notification)).resolves.toBe(false)
+
+    expect(childLogger.error).toHaveBeenCalledWith(
+      {
+        error: { name: 'TypeError', message: 'Invalid URL', code: 'ERR_INVALID_URL' },
+        reason: 'ERR_INVALID_URL',
+      },
+      'Notification delivery failed',
+    )
+    const serialized = JSON.stringify(vi.mocked(childLogger.error).mock.calls)
+    expect(serialized).not.toContain('s3cretPathToken')
+    expect(serialized).not.toContain('token=abc')
+    expect(serialized).not.toContain('/services/T0/B0')
+  })
+
+  test('logs a non-Error delivery failure by type only', async () => {
+    const user = new User({ id: '11', messageDeliveryType: MessageDeliveryType.WebHook, webHook: 'https://hooks.dev' })
+    post.mockRejectedValue('https://hooks.example.com/x?token=abc')
+
+    await expect(notificationService.trySendNotification(user, notification)).resolves.toBe(false)
+
+    expect(childLogger.error).toHaveBeenCalledWith(
+      { error: { type: 'string' }, reason: 'error' },
       'Notification delivery failed',
     )
     expect(JSON.stringify(vi.mocked(childLogger.error).mock.calls)).not.toContain('token=abc')

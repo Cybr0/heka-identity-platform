@@ -26,7 +26,8 @@ export class WebhookEgressService {
 
     let parsed: URL
     try {
-      parsed = new URL(webhookUrl.trim())
+      // Parse the exact string the HTTP client will send; WHATWG already strips ASCII edge whitespace.
+      parsed = new URL(webhookUrl)
     } catch {
       throw new WebhookTargetPolicyError('URL', 'Invalid webhook URL')
     }
