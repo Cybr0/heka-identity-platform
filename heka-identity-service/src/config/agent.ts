@@ -1,6 +1,8 @@
 import type { AskarModuleConfigStoreOptions } from '@credo-ts/askar'
 import type { InitConfig } from '@credo-ts/core'
 
+import { resolve } from 'path'
+
 import { DidCommModuleConfigOptions } from '@credo-ts/didcomm'
 import { IndyVdrPoolConfig } from '@credo-ts/indy-vdr'
 import { OpenId4VciCredentialFormatProfile } from '@credo-ts/openid4vc'
@@ -11,6 +13,7 @@ import express from 'express'
 import { AriesCredentialFormat, ProtocolType } from 'common/types'
 
 import { CredentialsConfiguration } from './credential-configuration'
+import { FileSystemConfig } from './file-storage'
 import { INSECURE_DEFAULTS, parseDidMethods } from './insecure-defaults'
 
 export default registerAs('agent', () => {
@@ -61,6 +64,9 @@ export default registerAs('agent', () => {
   const walletPostgresUser = process.env.WALLET_POSTGRES_USER ?? 'heka'
   const walletPostgresPass = process.env.WALLET_POSTGRES_PASSWORD ?? INSECURE_DEFAULTS.WALLET_POSTGRES_PASSWORD
 
+  // Public endpoints advertised to wallets and DIDComm peers. For anything
+  // beyond a same-host setup, set the AGENT_*_ENDPOINT variables in .env
+  // (e.g. to an ngrok URL — see docs/DEPLOYMENT.md at the repo root).
   const host = process.env.EXPRESS_HOST || 'localhost'
   const httpEndpoint = process.env.AGENT_HTTP_ENDPOINT ?? `http://${host}:${httpPort}`
   const wsEndpoint = process.env.AGENT_WS_ENDPOINT ?? `ws://${host}:${wsPort}`
@@ -85,12 +91,20 @@ export default registerAs('agent', () => {
   const hederaOperatorId = process.env.HEDERA_OPERATOR_ID ?? '0.0.5489553'
   const hederaOperatorKey = process.env.HEDERA_OPERATOR_KEY ?? INSECURE_DEFAULTS.HEDERA_OPERATOR_KEY
 
+  // The OID4VC router is the only surface that has to be publicly reachable
+  // over https (wallets reject non-https `display[].logo.uri`). Serve uploaded
+  // files (logos) from the same express app so a single tunnel covers both the
+  // issuer metadata and the images it references; point
+  // FILE_STORAGE_FS_PUBLIC_URL at AGENT_OID4VCI_ENDPOINT to use it.
+  const oid4VcApp = express()
+  oid4VcApp.use(express.static(resolve(new FileSystemConfig().path)))
+
   const oidConfig = {
     port: oid4VcPort,
     path: '/oid4vci',
     issuanceEndpoint: oid4VciEndpoint + '/oid4vci',
     verificationEndpoint: oid4VciEndpoint + '/oid4vp',
-    app: express(),
+    app: oid4VcApp,
   }
 
   const initConfig: InitConfig = {
