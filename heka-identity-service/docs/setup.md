@@ -393,10 +393,30 @@ Webhook deliveries always connect directly to the validated address and ignore `
 
 `WEBHOOK_ALLOW_PRIVATE_ADDRESSES` only relaxes the address and hostname rules. The scheme rule, the credential check, the redirect prohibition, the timeout and the response size cap always apply.
 
-To receive notifications on a local sink (for example `python -m http.server 9999`) or on a sibling Compose container, run the service with:
+To deliver notifications to a local sink or to a sibling Compose container, enable both settings, for example in `.env` (loaded by `yarn start` and used by `docker compose -f docker-compose.dev.yml` for variable substitution):
+
+```dotenv
+WEBHOOK_ALLOW_HTTP=true
+WEBHOOK_ALLOW_PRIVATE_ADDRESSES=true
+```
+
+For a one-off run, prefix the start command instead: `WEBHOOK_ALLOW_HTTP=true WEBHOOK_ALLOW_PRIVATE_ADDRESSES=true yarn start`.
+
+A minimal local sink that accepts the notification POST and prints its body (the service must be able to reach it; with `yarn start` use `http://localhost:9999/` as the webhook URL):
 
 ```bash
-WEBHOOK_ALLOW_HTTP=true WEBHOOK_ALLOW_PRIVATE_ADDRESSES=true
+python3 - <<'EOF'
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Sink(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+        print(body.decode(), flush=True)
+        self.send_response(204)
+        self.end_headers()
+
+HTTPServer(('127.0.0.1', 9999), Sink).serve_forever()
+EOF
 ```
 
 Webhook URLs stored before this policy existed are kept in the database as-is; there is no migration. A stored URL that violates the policy is not removed, but each delivery attempt is rejected and logged as `Notification delivery failed` with a `policy:<CODE>` reason. Users can restore delivery by saving a compliant URL via `PATCH /user`.
