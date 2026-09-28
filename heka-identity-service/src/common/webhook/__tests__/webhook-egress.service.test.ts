@@ -92,6 +92,23 @@ describe('WebhookEgressService', () => {
     })
   })
 
+  // A hostname can itself be a secret (per-endpoint random subdomains), so only the policy code is logged.
+  test('logs a rejection without the hostname', async () => {
+    vi.spyOn(dns, 'lookup').mockResolvedValue([{ address: '169.254.169.254', family: 4 }] as never)
+    const warn = vi.fn()
+    const service = new WebhookEgressService(
+      { allowHttp: false, allowPrivateAddresses: false, timeoutMs: 10_000 },
+      createMock<Logger>({ child: () => createMock<Logger>({ warn }) }),
+    )
+
+    await expect(service.assertCallbackUrlAllowed('https://s3cret-label.example.com/hook')).rejects.toMatchObject({
+      policyCode: 'ADDR',
+    })
+
+    expect(warn).toHaveBeenCalledWith({ policyCode: 'ADDR' }, '! webhook target rejected')
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('s3cret-label')
+  })
+
   test('rejects a hostname that resolves to a blocked address', async () => {
     vi.spyOn(dns, 'lookup').mockResolvedValue([{ address: '169.254.169.254', family: 4 }] as never)
 

@@ -50,7 +50,8 @@ export class WebhookEgressService {
       })
     } catch (error: unknown) {
       if (error instanceof WebhookTargetPolicyError) {
-        logger.warn({ host: parsed.hostname, policyCode: error.policyCode }, '! webhook target rejected')
+        // The hostname is not logged: it can itself be a secret (per-endpoint random subdomains).
+        logger.warn({ policyCode: error.policyCode }, '! webhook target rejected')
       }
       throw error
     }

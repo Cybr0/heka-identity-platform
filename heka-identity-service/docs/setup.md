@@ -361,6 +361,8 @@ By default a webhook URL is accepted only when it:
 
 Deliveries are additionally bounded: redirects are never followed, the response body is capped at 500 KiB, and each POST has a wall-clock deadline.
 
+Webhook deliveries always connect directly to the validated address and ignore `HTTP_PROXY` / `HTTPS_PROXY` / `NODE_USE_ENV_PROXY`, because a proxy would resolve and connect to the destination outside the address policy. Deployments whose only internet egress is through an HTTP(S) proxy cannot deliver webhooks.
+
 | Variable                          | Default | Description                                                                                                                     |
 | --------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `WEBHOOK_ALLOW_HTTP`              | `false` | Set to `true` to accept plaintext `http://` callbacks. HTTPS-only otherwise.                                                    |

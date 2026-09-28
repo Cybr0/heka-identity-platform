@@ -124,6 +124,32 @@ describe('UserService', () => {
       expect(em.flush).not.toHaveBeenCalled()
     })
 
+    test('rejects a disallowed webHook before touching the logo', async () => {
+      const user = new User({ id: '11', logo: 'old/path.png', messageDeliveryType: MessageDeliveryType.WebSocket })
+      vi.mocked(em.findOneOrFail).mockResolvedValue(user)
+      vi.mocked(webhookEgress.assertCallbackUrlAllowed).mockRejectedValue(
+        new WebhookTargetPolicyError('ADDR', 'Webhook target address is not permitted'),
+      )
+      const logoFile = { originalname: 'logo.png' } as Express.Multer.File
+
+      await expect(
+        userService.patchMe(
+          authInfo,
+          tenantAgent,
+          { messageDeliveryType: MessageDeliveryType.WebHook, webHook: 'https://blocked.example.com' },
+          logoFile,
+        ),
+      ).rejects.toMatchObject({ status: 400, message: 'Webhook target address is not permitted' })
+
+      expect(fileStorageService.remove).not.toHaveBeenCalled()
+      expect(fileStorageService.put).not.toHaveBeenCalled()
+      expect(user.logo).toBe('old/path.png')
+      expect(user.messageDeliveryType).toBe(MessageDeliveryType.WebSocket)
+      expect(user.webHook).toBeUndefined()
+      expect(issuerService.applyUserDisplay).not.toHaveBeenCalled()
+      expect(em.flush).not.toHaveBeenCalled()
+    })
+
     test('uploads new logo and removes old one', async () => {
       const user = new User({ id: '11', logo: 'old/path.png' })
       vi.mocked(em.findOneOrFail).mockResolvedValue(user)

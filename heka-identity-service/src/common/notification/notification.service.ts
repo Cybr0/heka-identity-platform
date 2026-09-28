@@ -78,13 +78,18 @@ function deliveryFailureReason(error: unknown): string {
 /**
  * Raw delivery errors can carry the webhook URL (Axios errors serialize their request config; Node's
  * ERR_INVALID_URL keeps the rejected string in `input`), so log only the fields needed for diagnosis.
+ * Library and OS error messages can embed the destination host (e.g. a TLS altname mismatch), so a
+ * message is logged only for policy rejections, whose messages are static.
  */
 function deliveryErrorForLog(error: unknown): Record<string, unknown> {
+  if (error instanceof WebhookTargetPolicyError) {
+    return { name: error.name, message: error.message, code: undefined }
+  }
   if (isAxiosError(error)) {
-    return { name: error.name, message: error.message, code: error.code, status: error.response?.status }
+    return { name: error.name, code: error.code, status: error.response?.status }
   }
   if (error instanceof Error) {
-    return { name: error.name, message: error.message, code: (error as NodeJS.ErrnoException).code }
+    return { name: error.name, code: (error as NodeJS.ErrnoException).code }
   }
   return { type: typeof error }
 }

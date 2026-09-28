@@ -50,6 +50,11 @@ export class UserService {
     const user = await this.em.findOneOrFail(User, { id: authInfo.userId })
     logger.traceObject({ user })
 
+    // Validate before any side effect: replacing the logo deletes the old file irreversibly.
+    if (req.webHook) {
+      await this.assertWebhookAllowed(req.webHook)
+    }
+
     let newLogoPath = undefined
 
     if (logo) {
@@ -63,7 +68,6 @@ export class UserService {
     }
 
     if (req.webHook) {
-      await this.assertWebhookAllowed(req.webHook)
       user.webHook = req.webHook
     }
 

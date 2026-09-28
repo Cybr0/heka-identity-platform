@@ -135,12 +135,7 @@ describe('NotificationService', () => {
 
     expect(childLogger.error).toHaveBeenCalledWith(
       {
-        error: {
-          name: 'AxiosError',
-          message: 'Request failed with status code 500',
-          code: 'ERR_BAD_RESPONSE',
-          status: 500,
-        },
+        error: { name: 'AxiosError', code: 'ERR_BAD_RESPONSE', status: 500 },
         reason: 'ERR_BAD_RESPONSE',
       },
       'Notification delivery failed',
@@ -160,7 +155,7 @@ describe('NotificationService', () => {
 
     expect(childLogger.error).toHaveBeenCalledWith(
       {
-        error: { name: 'AxiosError', message: 'connect ECONNREFUSED', code: 'ECONNREFUSED', status: undefined },
+        error: { name: 'AxiosError', code: 'ECONNREFUSED', status: undefined },
         reason: 'ECONNREFUSED',
       },
       'Notification delivery failed',
@@ -187,7 +182,7 @@ describe('NotificationService', () => {
 
     expect(childLogger.error).toHaveBeenCalledWith(
       {
-        error: { name: 'TypeError', message: 'Invalid URL', code: 'ERR_INVALID_URL' },
+        error: { name: 'TypeError', code: 'ERR_INVALID_URL' },
         reason: 'ERR_INVALID_URL',
       },
       'Notification delivery failed',
@@ -196,6 +191,31 @@ describe('NotificationService', () => {
     expect(serialized).not.toContain('s3cretPathToken')
     expect(serialized).not.toContain('token=abc')
     expect(serialized).not.toContain('/services/T0/B0')
+  })
+
+  // Node and axios copy socket/TLS error text into the message, and some of it names the destination
+  // host, which can itself be a secret (per-endpoint random subdomains).
+  test('logs a failed TLS delivery without the hostname from the error message', async () => {
+    const webHook = 'https://s3cret-label.hooks.example.com/notify'
+    const user = new User({ id: '11', messageDeliveryType: MessageDeliveryType.WebHook, webHook })
+    post.mockRejectedValue(
+      new AxiosError(
+        "Hostname/IP does not match certificate's altnames: Host: s3cret-label.hooks.example.com. " +
+          "is not in the cert's altnames: DNS:*.other.example.com",
+        'ERR_TLS_CERT_ALTNAME_INVALID',
+      ),
+    )
+
+    await expect(notificationService.trySendNotification(user, notification)).resolves.toBe(false)
+
+    expect(childLogger.error).toHaveBeenCalledWith(
+      {
+        error: { name: 'AxiosError', code: 'ERR_TLS_CERT_ALTNAME_INVALID', status: undefined },
+        reason: 'ERR_TLS_CERT_ALTNAME_INVALID',
+      },
+      'Notification delivery failed',
+    )
+    expect(JSON.stringify(vi.mocked(childLogger.error).mock.calls)).not.toContain('s3cret-label')
   })
 
   test('logs a non-Error delivery failure by type only', async () => {
