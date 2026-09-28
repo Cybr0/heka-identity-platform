@@ -119,7 +119,7 @@ Tokens issued by this service include the claims `sub`, `roles[]`, `name`, and o
 
 | Variable   | Default   | Description                                                              |
 |------------|-----------|--------------------------------------------------------------------------|
-| `NODE_ENV` | _(unset)_ | When set to `production`, switches the logger to non-pretty JSON output. Unless `NODE_ENV` is unset, empty, `development` or `test` (case-insensitive), the service refuses to start while `JWT_SECRET` or `DB_PASSWORD` are unset or left at their defaults; unrecognized values such as `staging` or typos are treated as production. Real deployments should set `NODE_ENV=production` explicitly. |
+| `NODE_ENV` | _(unset)_ | The logger prints pretty, colorized output only when set to `development` (case-insensitive); with any other value, including unset, it emits JSON. Unless `NODE_ENV` is unset, empty, `development` or `test` (case-insensitive), the service refuses to start while `JWT_SECRET` or `DB_PASSWORD` are unset or left at their defaults; unrecognized values such as `staging` or typos are treated as production. Real deployments should set `NODE_ENV=production` explicitly. |
 
 ## Migrations
 

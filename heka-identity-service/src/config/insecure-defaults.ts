@@ -79,9 +79,8 @@ export function findInsecureDefaults(env: Record<string, unknown>): InsecureDefa
 }
 
 // NODE_ENV values under which publicly known defaults only produce a warning (compared after
-// trimming and lowercasing). An unset or empty NODE_ENV is treated as development, matching the
-// existing convention in heka-auth-service/src/common/utils/environment.utils.ts. Any other value,
-// including typos or custom names such as "staging", is treated as production (fail closed).
+// trimming and lowercasing). An unset or empty NODE_ENV is also treated as development.
+// Any other value, including typos or custom names such as "staging", is treated as production (fail closed).
 const NON_PRODUCTION_NODE_ENVS = ['development', 'test']
 
 // Returns `undefined` for a non-string value, which is unexpected from the environment and therefore not allowlisted.
