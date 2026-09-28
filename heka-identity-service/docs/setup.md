@@ -402,7 +402,7 @@ WEBHOOK_ALLOW_PRIVATE_ADDRESSES=true
 
 For a one-off run, prefix the start command instead: `WEBHOOK_ALLOW_HTTP=true WEBHOOK_ALLOW_PRIVATE_ADDRESSES=true yarn start`.
 
-A minimal local sink that accepts the notification POST and prints its body (the service must be able to reach it; with `yarn start` use `http://localhost:9999/` as the webhook URL):
+A minimal local sink that accepts the notification POST and prints its body (the service must be able to reach it; with `yarn start` use `http://127.0.0.1:9999/` as the webhook URL):
 
 ```bash
 python3 - <<'EOF'
