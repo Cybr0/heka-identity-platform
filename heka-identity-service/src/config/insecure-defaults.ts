@@ -47,9 +47,26 @@ const CONDITIONAL: Array<{ name: InsecureDefaultName; isEnabled: (env: Record<st
   { name: 'FILE_STORAGE_MINIO_SECRET_KEY', isEnabled: (env) => env.FILE_STORAGE_TARGET === 'minio' },
 ]
 
+// Private scalar of the default mDL issuer JWK, derived from INSECURE_DEFAULTS so the key is not duplicated.
+const DEFAULT_MDL_ISSUER_KEY_D = (JSON.parse(INSECURE_DEFAULTS.MDL_ISSUER_PRIVATE_KEY) as { d: string }).d
+
+// The mDL issuer key is consumed as a parsed JWK (see `agent.ts`), so compare its private scalar `d`
+// rather than the JSON text: reformatted JSON, reordered members or a different `kid` still carry the known key.
+function isDefaultMdlIssuerKey(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  try {
+    const jwk: unknown = JSON.parse(value)
+    return typeof jwk === 'object' && jwk !== null && (jwk as { d?: unknown }).d === DEFAULT_MDL_ISSUER_KEY_D
+  } catch {
+    // Not valid JSON, so not the known default. The error is deliberately not surfaced: it could echo the value.
+    return false
+  }
+}
+
 function isInsecure(env: Record<string, unknown>, name: InsecureDefaultName): boolean {
   const value = env[name]
-  return value === undefined || value === '' || value === INSECURE_DEFAULTS[name]
+  if (value === undefined || value === '' || value === INSECURE_DEFAULTS[name]) return true
+  return name === 'MDL_ISSUER_PRIVATE_KEY' && isDefaultMdlIssuerKey(value)
 }
 
 /**

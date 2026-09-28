@@ -228,7 +228,7 @@ The defaults of the following variables are development/test credentials that ar
 | `HEDERA_OPERATOR_KEY`            | `DID_METHODS` contains `hedera`                    |
 | `FILE_STORAGE_MINIO_SECRET_KEY`  | `FILE_STORAGE_TARGET` is `minio`                   |
 
-At startup the service checks whether any of these is unset, empty, or still equal to its default:
+At startup the service checks whether any of these is unset, empty, or still equal to its default. For `MDL_ISSUER_PRIVATE_KEY`, any JWK containing the default private key (`d`) counts as the default, regardless of formatting, member order or `kid`:
 
 - when `NODE_ENV` is unset, empty, `development` or `test` (case-insensitive, surrounding whitespace ignored), a warning naming the affected variables is logged and the service starts (local development and tests);
 - with any other `NODE_ENV` value, including `production` in any casing, typos such as `prod`, or custom names such as `staging`, the service **refuses to start** and lists the variables that must be set.

@@ -68,6 +68,38 @@ describe('insecure defaults', () => {
       expect(findInsecureDefaults(env)).toEqual(['MDL_ISSUER_PRIVATE_KEY'])
     })
 
+    describe('mDL issuer key compared by its private key material', () => {
+      const defaultJwk = JSON.parse(INSECURE_DEFAULTS.MDL_ISSUER_PRIVATE_KEY) as Record<string, string>
+      const defaultJwkWithoutKid = Object.fromEntries(Object.entries(defaultJwk).filter(([key]) => key !== 'kid'))
+      const reordered = Object.fromEntries(Object.entries(defaultJwk).reverse())
+
+      it.each([
+        ['pretty-printed', JSON.stringify(defaultJwk, null, 2)],
+        ['surrounded by whitespace', `  ${INSECURE_DEFAULTS.MDL_ISSUER_PRIVATE_KEY}\n`],
+        ['with reordered members', JSON.stringify(reordered)],
+        ['with a different kid', JSON.stringify({ ...defaultJwk, kid: 'another-kid' })],
+        ['without a kid', JSON.stringify(defaultJwkWithoutKid)],
+      ])('flags the default key %s', (_label, value) => {
+        expect(value).not.toBe(INSECURE_DEFAULTS.MDL_ISSUER_PRIVATE_KEY)
+        expect(findInsecureDefaults({ ...secureEnv, MDL_ISSUER_PRIVATE_KEY: value })).toEqual([
+          'MDL_ISSUER_PRIVATE_KEY',
+        ])
+      })
+
+      it('does not flag a JWK with a different private key', () => {
+        const value = JSON.stringify({ ...defaultJwk, d: 'a-different-private-scalar' })
+        expect(findInsecureDefaults({ ...secureEnv, MDL_ISSUER_PRIVATE_KEY: value })).toEqual([])
+      })
+
+      it.each(['not-json', '{"d":', 'null', '"x"', '[]', '42', 'true'])(
+        'neither flags nor throws for invalid or non-object JSON (%j)',
+        (value) => {
+          expect(() => findInsecureDefaults({ ...secureEnv, MDL_ISSUER_PRIVATE_KEY: value })).not.toThrow()
+          expect(findInsecureDefaults({ ...secureEnv, MDL_ISSUER_PRIVATE_KEY: value })).toEqual([])
+        },
+      )
+    })
+
     it('flags every unset variable when the environment is empty (default DID methods)', () => {
       expect(findInsecureDefaults({})).toEqual([
         'JWT_SECRET',
@@ -167,6 +199,26 @@ describe('insecure defaults', () => {
 
     it('does nothing for a secure configuration under an unrecognized NODE_ENV', () => {
       expect(() => assertSecureConfiguration({ ...secureEnv, NODE_ENV: 'staging' })).not.toThrow()
+      expect(warnSpy).not.toHaveBeenCalled()
+    })
+
+    it('refuses to start in production with a reformatted default mDL key without echoing it', () => {
+      const value = JSON.stringify(JSON.parse(INSECURE_DEFAULTS.MDL_ISSUER_PRIVATE_KEY), null, 2)
+      const { d } = JSON.parse(INSECURE_DEFAULTS.MDL_ISSUER_PRIVATE_KEY) as { d: string }
+
+      const message = thrownMessage(() =>
+        assertSecureConfiguration({ ...secureEnv, NODE_ENV: 'production', MDL_ISSUER_PRIVATE_KEY: value }),
+      )
+      expect(message).toMatch(/Insecure configuration: MDL_ISSUER_PRIVATE_KEY is unset/)
+      expect(message).not.toContain(d)
+      expect(message).not.toContain(value)
+      expect(warnSpy).not.toHaveBeenCalled()
+    })
+
+    it('does not throw in production for a malformed mDL key', () => {
+      expect(() =>
+        assertSecureConfiguration({ ...secureEnv, NODE_ENV: 'production', MDL_ISSUER_PRIVATE_KEY: 'not-json' }),
+      ).not.toThrow()
       expect(warnSpy).not.toHaveBeenCalled()
     })
 
