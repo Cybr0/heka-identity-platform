@@ -321,7 +321,7 @@ The flag doesn't change roles, organizations or wallets, so it can be changed wi
 
 #### Upgrading an existing deployment
 
-The role model release doesn't keep backward compatibility with existing data. A fresh deployment needs no action. Before users of an existing deployment sign in again, read the following and complete steps 3 and 4:
+The role model release doesn't keep backward compatibility with existing data. A fresh deployment needs no action. Before users of an existing deployment sign in again, read the following and complete steps 3 to 5:
 
 1. **Wallets change for existing tokens.** Wallet IDs now resolve as in the [role model table](concepts.md#role-model). Before, `Admin` tokens used `Administration_<sub>`, `Issuer` / `Verifier` tokens used `<Role>_<sub>_in_Organization_<org_id>`, and `OrgMember` tokens used `Organization_<org_id>`. On the next request these accounts get a new, empty tenant. DIDs, connections, credentials and OID4VC records in the previous tenants aren't deleted, but they can't be reached through the API anymore. `OrgAdmin`, `OrgManager` and `User` wallets are unchanged.
 2. **Schemas, templates and status lists are dropped.** Migration `Migration20260924120000` deletes all schemas, issuance and verification templates, and credential status lists, because they now belong to a wallet instead of a user. Status list URLs in previously issued credentials return `404`, so their revocation status can't be checked anymore.
@@ -332,6 +332,7 @@ The role model release doesn't keep backward compatibility with existing data. A
    ```
 
 4. **Role changes apply to new tokens only.** Access tokens that were already issued keep their old role until they expire, and the demo user's access token is valid for about one year. The Identity Service doesn't check whether the Auth Service revoked a token, so to invalidate outstanding tokens, rotate `JWT_SECRET` in both services. Then re-run `prepare-demo-user.ts` so the Web UI environment gets a new demo user token.
+5. **The SSO service account moves to a new wallet.** `heka-sso-service` signs in to the Auth Service as `IDENTITY_SERVICE_AUTH_NAME` (by default the demo user) and creates verification sessions under `IDENTITY_SERVICE_PUBLIC_VERIFIER_ID`, signed with `IDENTITY_SERVICE_REQUEST_SIGNER_DID`. Both belong to the account's previous wallet. Give the service its own account with a role that holds the `verify` and `did` capabilities, such as `Verifier` in an organization, rather than reassigning it to `OrgMember`. With the role model enabled, a `Verifier` can create a public DID only after `Organization_<org_id>` has one. Then create the signing DID and the verifier again with that account, set both variables to the new values, and restart the SSO service. Replace `IDENTITY_SERVICE_AUTH_TOKEN` too if it is set, because it was signed with the old `JWT_SECRET`.
 
 ### Ledger / DID methods
 
