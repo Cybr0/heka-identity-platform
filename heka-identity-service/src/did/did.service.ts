@@ -9,6 +9,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common'
 import { ConfigType } from '@nestjs/config'
+import { Mutex } from 'async-mutex'
 
 import { Agent, AGENT_TOKEN, TenantAgent } from 'common/agent'
 import { AuthInfo } from 'common/auth'
@@ -25,6 +26,8 @@ import { CreateDidRequestDto, DidDocumentDto, FindDidRequestDto, GetDidMethodsRe
 
 @Injectable()
 export class DidService {
+  private readonly mainDidMutex = new Mutex()
+
   public constructor(
     @Inject(AGENT_TOKEN)
     private readonly agent: Agent,
@@ -74,38 +77,46 @@ export class DidService {
     // 1. Only roles with the `did` capability may create a public DID
     this.authorizationService.assert(authInfo, Capability.Did)
 
-    // 2. `Wallet.publicDid` is the main-method DID, so only that method is limited to one per wallet
     const method = req.method ?? MAIN_DID_METHOD
-    const wallet = await this.em.findOneOrFail(Wallet, { id: authInfo.walletId })
-    if (method === MAIN_DID_METHOD && wallet.publicDid) {
-      throw new ConflictException(`The wallet already contains created public DID: ${wallet.publicDid}`)
-    }
 
-    // 3. The controller's public DID must exist first. It only orders the hierarchy: the DID is
-    // always created in the caller's own wallet
-    if (this.authorizationService.isEnforced) {
-      const didControllerWalletId = getDidControllerWalletId({ role: authInfo.role, orgId: authInfo.orgId })
-      logger.info(`DID controller wallet ID: ${didControllerWalletId ?? 'N/A'}`)
+    const run = async () => {
+      // 2. `Wallet.publicDid` is the main-method DID, so only that method is limited to one per wallet.
+      // The wallet is re-read so a main DID persisted by a concurrent request is observed
+      const wallet = await this.em.findOneOrFail(Wallet, { id: authInfo.walletId }, { refresh: true })
+      if (method === MAIN_DID_METHOD && wallet.publicDid) {
+        throw new ConflictException(`The wallet already contains created public DID: ${wallet.publicDid}`)
+      }
 
-      if (didControllerWalletId) {
-        const didControllerWallet = await this.em.findOne(Wallet, { id: didControllerWalletId })
-        if (!didControllerWallet?.publicDid) {
-          throw new UnprocessableEntityException(
-            `Public DID created by ${didControllerWalletId} is required in order to be set as controller but it has not been created yet`,
-          )
+      // 3. The controller's public DID must exist first. It only orders the hierarchy: the DID is
+      // always created in the caller's own wallet
+      if (this.authorizationService.isEnforced) {
+        const didControllerWalletId = getDidControllerWalletId({ role: authInfo.role, orgId: authInfo.orgId })
+        logger.info(`DID controller wallet ID: ${didControllerWalletId ?? 'N/A'}`)
+
+        if (didControllerWalletId) {
+          const didControllerWallet = await this.em.findOne(Wallet, { id: didControllerWalletId })
+          if (!didControllerWallet?.publicDid) {
+            throw new UnprocessableEntityException(
+              `Public DID created by ${didControllerWalletId} is required in order to be set as controller but it has not been created yet`,
+            )
+          }
         }
       }
+
+      // 4. Unsupported methods are rejected by the registrar
+      const didDocument = await this.didRegistrarService.createDid(authInfo.tenantId, method, {
+        namespace: this.agent.agencyConfig.networks[0].indyNamespace,
+      })
+
+      if (method === MAIN_DID_METHOD) {
+        wallet.publicDid = didDocument.id
+      }
+      await this.em.flush()
+      return didDocument
     }
 
-    // 4. Unsupported methods are rejected by the registrar
-    const didDocument = await this.didRegistrarService.createDid(authInfo.tenantId, method, {
-      namespace: this.agent.agencyConfig.networks[0].indyNamespace,
-    })
-
-    if (method === MAIN_DID_METHOD) {
-      wallet.publicDid = didDocument.id
-    }
-    await this.em.flush()
+    // The main-method DID check, creation and write are serialized, so concurrent requests cannot both create one
+    const didDocument = method === MAIN_DID_METHOD ? await this.mainDidMutex.runExclusive(run) : await run()
 
     const res = new DidDocumentDto(didDocument)
 

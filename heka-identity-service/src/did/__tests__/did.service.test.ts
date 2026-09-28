@@ -257,6 +257,74 @@ describe('DidService', () => {
       )
     })
 
+    test('re-reads the wallet so a main-method DID persisted concurrently is observed', async () => {
+      vi.mocked(em.findOneOrFail).mockResolvedValue(entityStub<Wallet>({ id: 'Administration', publicDid: undefined }))
+      vi.mocked(didRegistrarService.createDid).mockResolvedValue(didDocumentStub({ id: 'did:key:root' }))
+
+      await didService.create(makeAuthInfo(Role.Admin, 'Administration'), {})
+
+      expect(em.findOneOrFail).toHaveBeenCalledWith(Wallet, { id: 'Administration' }, { refresh: true })
+    })
+
+    test('concurrent main-method creates for one wallet create exactly one DID, the other gets 409', async () => {
+      const wallet = entityStub<Wallet>({ id: 'Administration', publicDid: undefined })
+      vi.mocked(em.findOneOrFail).mockResolvedValue(wallet)
+      vi.mocked(didRegistrarService.createDid).mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve(didDocumentStub({ id: 'did:key:root' })), 10)),
+      )
+      const authInfo = makeAuthInfo(Role.Admin, 'Administration')
+
+      const results = await Promise.allSettled([didService.create(authInfo, {}), didService.create(authInfo, {})])
+
+      expect(didRegistrarService.createDid).toHaveBeenCalledTimes(1)
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+      const rejected = results.find((result) => result.status === 'rejected') as PromiseRejectedResult
+      expect(rejected.reason).toBeInstanceOf(ConflictException)
+      expect(wallet.publicDid).toBe('did:key:root')
+    })
+
+    test('the main-method lock is released when DID creation fails', async () => {
+      const wallet = entityStub<Wallet>({ id: 'Administration', publicDid: undefined })
+      vi.mocked(em.findOneOrFail).mockResolvedValue(wallet)
+      vi.mocked(didRegistrarService.createDid)
+        .mockRejectedValueOnce(new Error('KMS failure'))
+        .mockResolvedValueOnce(didDocumentStub({ id: 'did:key:root' }))
+      const authInfo = makeAuthInfo(Role.Admin, 'Administration')
+
+      await expect(didService.create(authInfo, {})).rejects.toThrow('KMS failure')
+      const result = await didService.create(authInfo, {})
+
+      expect(result.id).toBe('did:key:root')
+      expect(wallet.publicDid).toBe('did:key:root')
+    })
+
+    test('concurrent non-main creates are not serialized', async () => {
+      vi.mocked(em.findOneOrFail).mockResolvedValue(
+        entityStub<Wallet>({ id: 'Administration', publicDid: 'did:key:root' }),
+      )
+      let pending = 0
+      let maxPending = 0
+      vi.mocked(didRegistrarService.createDid).mockImplementation(() => {
+        pending++
+        maxPending = Math.max(maxPending, pending)
+        return new Promise((resolve) =>
+          setTimeout(() => {
+            pending--
+            resolve(didDocumentStub({ id: 'did:indy:test-ns:own' }))
+          }, 10),
+        )
+      })
+      const authInfo = makeAuthInfo(Role.Admin, 'Administration')
+
+      await Promise.all([
+        didService.create(authInfo, { method: 'indy' }),
+        didService.create(authInfo, { method: 'indy' }),
+      ])
+
+      expect(didRegistrarService.createDid).toHaveBeenCalledTimes(2)
+      expect(maxPending).toBe(2)
+    })
+
     test('simplified mode skips the capability and controller checks', async () => {
       const service = makeService(false)
       const wallet = entityStub<Wallet>({ id: 'Member_user-1_in_Organization_org-1', publicDid: undefined })

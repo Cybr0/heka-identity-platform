@@ -52,7 +52,13 @@ export class PrepareWalletService {
     if (mainDid) {
       logger.info(`Wallet ${authInfo.walletId} already prepared`)
     } else {
-      for (const method of this.didService.getMethods().methods) {
+      // The main DID is required, so it is created first: if it fails, no other DID or OID4VC record is left behind
+      const methods = this.didService.getMethods().methods
+      const orderedMethods = [
+        ...methods.filter((method) => method === PrepareWalletService.mainDidMethod),
+        ...methods.filter((method) => method !== PrepareWalletService.mainDidMethod),
+      ]
+      for (const method of orderedMethods) {
         let did
 
         try {

@@ -106,15 +106,19 @@ describe('Endpoint capability coverage', () => {
   test('every authenticated endpoint is guarded by RoleGuard and declares exactly one capability', () => {
     const missing: string[] = []
 
-    for (const controller of controllers.filter((c) => guardsOf(c).includes(JwtAuthGuard))) {
-      if (!guardsOf(controller).includes(RoleGuard)) {
-        missing.push(`${controller.name}: RoleGuard`)
-      }
-
+    for (const controller of controllers) {
       for (const name of Object.getOwnPropertyNames(controller.prototype)) {
         const handler = (controller.prototype as Record<string, unknown>)[name]
         if (typeof handler !== 'function' || Reflect.getMetadata(METHOD_METADATA, handler) === undefined) {
           continue
+        }
+        // Guards may be attached to the controller class, the handler, or both
+        const guards = [...guardsOf(controller), ...guardsOf(handler)]
+        if (!guards.includes(JwtAuthGuard)) {
+          continue
+        }
+        if (!guards.includes(RoleGuard)) {
+          missing.push(`${controller.name}.${name}: RoleGuard`)
         }
         const capability = Reflect.getMetadata(CAPABILITY_KEY, handler) as Capability | undefined
         if (!capability || !(capability in CAPABILITY_ROLES)) {

@@ -107,6 +107,7 @@ describe('UserService', () => {
       expect(user.messageDeliveryType).toBe(MessageDeliveryType.WebHook)
       expect(user.webHook).toBe('https://hooks.example.com')
       expect(webhookEgress.assertCallbackUrlAllowed).toHaveBeenCalledWith('https://hooks.example.com')
+      expect(issuerService.applyUserDisplay).not.toHaveBeenCalled()
     })
 
     test('rejects a webHook that violates the egress policy and persists nothing', async () => {
@@ -227,6 +228,55 @@ describe('UserService', () => {
       expect(user.name).toBe('Bob')
       expect(issuerService.applyUserDisplay).not.toHaveBeenCalled()
       expect(wallet.displayName).toBe('Org')
+    })
+
+    const adminAuthInfo = { ...authInfo, role: Role.Admin, orgId: undefined, walletId: 'Administration' }
+
+    test('a patch without display fields does not change the shared display', async () => {
+      const user = new User({ id: '11', name: 'Second admin', backgroundColor: '#123', logo: 'admin/logo.png' })
+      const wallet = new Wallet({ id: 'Administration', tenantId: '123' })
+      wallet.displayName = 'Platform'
+      mockEntities(user, wallet)
+
+      await userService.patchMe(adminAuthInfo, tenantAgent, {
+        webHook: 'https://hooks.example.com',
+        messageDeliveryType: MessageDeliveryType.WebHook,
+      })
+
+      expect(user.webHook).toBe('https://hooks.example.com')
+      expect(issuerService.applyUserDisplay).not.toHaveBeenCalled()
+      expect(wallet.displayName).toBe('Platform')
+      expect(em.flush).toHaveBeenCalled()
+    })
+
+    test('resetting the logo is a display change', async () => {
+      const user = new User({ id: '11', name: 'Alice', logo: 'some/path.png' })
+      const wallet = new Wallet({ id: 'Administration', tenantId: '123' })
+      mockEntities(user, wallet)
+
+      await userService.patchMe(adminAuthInfo, tenantAgent, { logo: '' })
+
+      expect(issuerService.applyUserDisplay).toHaveBeenCalledWith(
+        tenantAgent,
+        expect.objectContaining({ name: 'Alice', logo: { uri: undefined } }),
+      )
+      expect(wallet.displayName).toBe('Alice')
+    })
+
+    test('an uploaded logo alone is a display change', async () => {
+      const user = new User({ id: '11', name: 'Alice' })
+      const wallet = new Wallet({ id: 'Administration', tenantId: '123' })
+      mockEntities(user, wallet)
+      vi.mocked(fileStorageService.put).mockResolvedValue('new/path.png')
+      vi.mocked(fileStorageService.publicUrl).mockReturnValue('https://cdn/new.png')
+
+      await userService.patchMe(adminAuthInfo, tenantAgent, {}, { originalname: 'logo.png' } as Express.Multer.File)
+
+      expect(issuerService.applyUserDisplay).toHaveBeenCalledWith(
+        tenantAgent,
+        expect.objectContaining({ name: 'Alice', logo: { uri: 'https://cdn/new.png' } }),
+      )
+      expect(wallet.displayName).toBe('Alice')
     })
   })
 })

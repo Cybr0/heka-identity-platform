@@ -19,13 +19,13 @@ The Identity Service is multi-tenant. A single deployment hosts many independent
 ### Tenant lifecycle
 
 - **Tenants are created on first authenticated request.** When a JWT arrives whose `(role, sub, org_id)` triple maps to a previously unseen wallet, the service creates a wallet record and provisions a Credo sub-agent for it (`src/common/auth/auth.service.ts`).
-- **Tenant identity is derived from the JWT, not carried as a claim.** The wallet ID is computed from the token's `sub`, `roles[0]`, and optional `org_id` (`getWalletId(...)` in `src/common/auth/auth.service.ts`). The internal `tenantId` is then looked up from the wallet record and used by the `TenantAgentInterceptor` to load the correct tenant-scoped Credo agent for every request (`src/common/agent/tenant-agent.interceptor.ts`). See [Setup — Required JWT claims](setup.md#required-jwt-claims) for the full claim set.
+- **Tenant identity is derived from the JWT, not carried as a claim.** The wallet ID is computed from the token's single role (`roles` must contain exactly one entry), `sub` and `org_id` as described in [Role model](#role-model) (`getWalletId(...)` in `src/utils/auth/index.ts`). The internal `tenantId` is then looked up from the wallet record and used by the `TenantAgentInterceptor` to load the correct tenant-scoped Credo agent for every request (`src/common/agent/tenant-agent.interceptor.ts`). See [Setup — Required JWT claims](setup.md#required-jwt-claims) for the full claim set.
 - **Wallets are isolated.** Each tenant has its own Askar wallet (stored in PostgreSQL) holding that tenant's keys, DIDs, connections, and credentials. Cross-tenant access is not possible through the API.
 - **One agent process, many tenants.** The service runs a single Credo agency that holds per-tenant sub-agents (via Credo's `TenantsModule`). Tenant context is established per-request from the JWT, not through process isolation.
 
 ### Role model
 
-The role model is optional and controlled by [`ROLE_MODEL_ENABLED`](setup.md#role-model). Roles, organizations and wallets are the same in both modes; the flag only decides whether role capabilities are enforced.
+The role model is optional and controlled by [`ROLE_MODEL_ENABLED`](setup.md#role-model). Roles, organizations and wallets are the same in both modes; the flag only decides whether role capabilities are enforced. Existing deployments must follow [Upgrading an existing deployment](setup.md#upgrading-an-existing-deployment).
 
 | Role                  | Scope        | Wallet (identity it acts as)                                          | Can create a public DID                   |
 | --------------------- | ------------ | --------------------------------------------------------------------- | ----------------------------------------- |

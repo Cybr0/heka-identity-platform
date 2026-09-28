@@ -88,8 +88,10 @@ export class UserService {
       user.registeredAt = new Date()
     }
 
-    // The issuer display belongs to the wallet, so only an actor who administers it writes it
-    if (administersWallet(authInfo.role)) {
+    // The issuer display belongs to the wallet, so only an actor who administers it writes it, and only when the
+    // request changes a display field (a shared wallet's branding must not follow unrelated profile updates)
+    const changesDisplay = Boolean(req.name || req.backgroundColor || logo || req.logo === '')
+    if (changesDisplay && administersWallet(authInfo.role)) {
       const issuerLogoPath = newLogoPath ?? user.logo
       const issuerLogoUrl = issuerLogoPath ? this.fileStorageService.publicUrl(issuerLogoPath) : undefined
       const displayName = user.name ?? authInfo.userId

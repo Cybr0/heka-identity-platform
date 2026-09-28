@@ -108,6 +108,35 @@ describe('PrepareWalletService', () => {
     expect(didService.create).toHaveBeenCalledWith(authInfo, { method: 'key' })
   })
 
+  test('creates the main-method DID first regardless of the configured order', async () => {
+    vi.mocked(didService.getMethods).mockReturnValue({ methods: ['indy', 'key', 'hedera'] })
+    vi.mocked(didService.create)
+      .mockResolvedValueOnce({ id: 'did:key:z1' } as any)
+      .mockResolvedValueOnce({ id: 'did:indy:z2' } as any)
+      .mockResolvedValueOnce({ id: 'did:hedera:z3' } as any)
+
+    const result = await prepareWalletService.prepareWallet(authInfo, tenantAgent, {})
+
+    expect(didService.create).toHaveBeenNthCalledWith(1, authInfo, { method: 'key' })
+    expect(didService.create).toHaveBeenNthCalledWith(2, authInfo, { method: 'indy' })
+    expect(didService.create).toHaveBeenNthCalledWith(3, authInfo, { method: 'hedera' })
+    expect(result.did).toBe('did:key:z1')
+  })
+
+  test('a main-method failure leaves no non-main DID or OID4VC record behind', async () => {
+    vi.mocked(didService.getMethods).mockReturnValue({ methods: ['indy', 'key'] })
+    const error = new Error('KMS failure')
+    vi.mocked(didService.create).mockRejectedValue(error)
+
+    await expect(prepareWalletService.prepareWallet(authInfo, tenantAgent, {})).rejects.toBe(error)
+
+    expect(didService.create).toHaveBeenCalledTimes(1)
+    expect(didService.create).toHaveBeenCalledWith(authInfo, { method: 'key' })
+    expect(issuerService.createIssuer).not.toHaveBeenCalled()
+    expect(verifierService.createVerifier).not.toHaveBeenCalled()
+    expect(userService.patchMe).not.toHaveBeenCalled()
+  })
+
   test('continues when a non-main DID method fails', async () => {
     vi.mocked(didService.find).mockResolvedValue([])
     vi.mocked(didService.getMethods).mockReturnValue({ methods: ['key', 'indy'] })
