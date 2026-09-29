@@ -100,6 +100,8 @@ Tokens issued by this service include the claims `sub`, `roles[]`, `name`, and o
 
 The shared-secret check alone does not see revocation: an access token revoked here (logout via `POST /api/v1/oauth/revoke`, or the old access token after `POST /api/v1/oauth/refresh`) is still accepted by the Identity Service until it expires. To close that gap, enable the Identity Service's opt-in [token revocation check](../heka-identity-service/docs/setup.md#token-revocation-check). It calls `POST /api/v1/oauth/introspect` on this service with the token as a Bearer token. The response is `200 {"active": true}` only for a stored access token that is neither revoked nor expired; any other token, including a refresh token, gets `{"active": false}`. A missing or non-Bearer `Authorization` header gets `401`. The endpoint is exempt from the global rate limit (`THROTTLE_TTL` / `THROTTLE_LIMIT`), because the Identity Service calls it for every authenticated request from a single address.
 
+The introspection endpoint does not authenticate its caller and is not rate-limited, so it must be reachable only by the Identity Service. Block the `/api/v1/oauth/introspect` path at the public ingress or reverse proxy (the path, not the host, when both services share a public hostname) and let the Identity Service reach it over the internal network.
+
 ### Logging
 
 | Variable            | Default                                                          | Description                                                           |

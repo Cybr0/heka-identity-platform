@@ -311,6 +311,8 @@ When enabled, the check **fails closed**: the request is rejected with `401` (th
 
 Only access tokens issued and stored by the configured Auth Service instance are accepted. Tokens from any other issuer that shares `JWT_SECRET` (including locally signed test tokens) are rejected, so leave the check disabled when such tokens are in use.
 
+`JWT_REVOCATION_CHECK_URL` should point at the Auth Service's internal address; the introspection endpoint must not be publicly reachable (see the [Auth Service README](../../heka-auth-service/README.md)). The call carries the user's bearer token, so use an `https://` URL unless the Identity Service reaches Auth Service over a private network (for example an internal Docker or Kubernetes network). Plain `http://` is intended only for local development and such internal links.
+
 #### Required JWT claims
 
 The token strategy (`src/common/auth/jwt.strategy.ts`) and validator (`src/common/auth/auth.service.ts`) expect:
