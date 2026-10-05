@@ -9,7 +9,7 @@ import { Agent } from 'common/agent'
 import { Role } from 'common/auth'
 import { User, Wallet } from 'common/entities'
 import { Logger } from 'common/logger'
-import { administersWallet, getDidControllerWalletId, getWalletId } from 'utils/auth'
+import { getDidControllerWalletId, getWalletId } from 'utils/auth'
 
 import { AuthService } from '../auth.service'
 
@@ -71,16 +71,6 @@ describe('getDidControllerWalletId', () => {
       expect(() => getDidControllerWalletId(params)).toThrow(UnauthorizedException)
     },
   )
-})
-
-describe('administersWallet', () => {
-  test.each(Object.values(Role).filter((role) => role !== Role.OrgManager))('%s administers its wallet', (role) => {
-    expect(administersWallet(role)).toBe(true)
-  })
-
-  test('OrgManager operates the organization wallet without administering it', () => {
-    expect(administersWallet(Role.OrgManager)).toBe(false)
-  })
 })
 
 describe('AuthService', () => {

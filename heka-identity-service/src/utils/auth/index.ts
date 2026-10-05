@@ -60,12 +60,3 @@ export function getDidControllerWalletId({ role, orgId }: { role: Role; orgId?: 
       throw new ForbiddenException(`Role '${role}' cannot create a public DID`)
   }
 }
-
-/**
- * Whether the role administers the wallet it acts in, i.e. may write the wallet's issuer display.
- * Personal wallets are administered by their only user; `OrgManager` operates the organization
- * wallet without administering it.
- */
-export function administersWallet(role: Role): boolean {
-  return role !== Role.OrgManager
-}
