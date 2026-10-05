@@ -1,7 +1,7 @@
 import { Entity, Enum, ManyToOne, Property } from '@mikro-orm/decorators/legacy'
 
 import { Identified } from './identified.entity'
-import { Wallet } from './wallet.entity'
+import { User } from './user.entity'
 
 export enum StatusListPurpose {
   Revocation = 'revocation',
@@ -15,7 +15,7 @@ interface CredentialStatusListProps {
   size?: number
   lastIndex?: number
   purpose?: StatusListPurpose
-  owner: Wallet
+  owner: User
 }
 
 // W3C Bitstring Status List v1.0 sets a 16KB = 131,072-bit minimum for herd privacy (§2.2, §3.3)
@@ -43,8 +43,8 @@ export class CredentialStatusList extends Identified {
   @Enum(() => StatusListPurpose)
   public purpose: StatusListPurpose
 
-  @ManyToOne(() => Wallet, { nullable: false, lazy: true })
-  public owner!: Wallet
+  @ManyToOne(() => User, { nullable: false, lazy: true })
+  public owner!: User
 
   public constructor(props: CredentialStatusListProps) {
     super(props)

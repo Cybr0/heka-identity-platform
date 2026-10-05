@@ -15,22 +15,20 @@ describe('VerificationTemplateService', () => {
   let logger: Logger
   let fileStorageService: FileStorageService
 
-  // Owned by the wallet the actor acts in, not by the actor
-  const mockWallet = { id: 'Member_user-1_in_Organization_1', displayName: 'Test User' }
+  const mockUser = { id: 'user-1', name: 'Test User' }
   const authInfo = {
     userId: 'user-1',
-    user: { id: 'user-1', name: 'Test User' } as any,
+    user: mockUser as any,
     userName: 'testuser',
     role: Role.Admin,
     orgId: '1',
-    walletId: mockWallet.id,
+    walletId: 'Administration_user-1',
     tenantId: 'tenant-1',
   }
 
   beforeEach(() => {
     logger = createMock<Logger>()
     em = createMock<EntityManager>()
-    vi.mocked(em.getReference).mockReturnValue(mockWallet as any)
     fileStorageService = createMock<FileStorageService>()
     service = new VerificationTemplateService(logger, em, fileStorageService)
   })
@@ -63,11 +61,7 @@ describe('VerificationTemplateService', () => {
 
       const result = await service.getTemplateById(authInfo, 'tpl-1')
 
-      expect(em.findOne).toHaveBeenCalledWith(
-        VerificationTemplate,
-        { owner: mockWallet, id: 'tpl-1' },
-        expect.anything(),
-      )
+      expect(em.findOne).toHaveBeenCalledWith(VerificationTemplate, { owner: mockUser, id: 'tpl-1' }, expect.anything())
       expect(fileStorageService.url).toHaveBeenCalledWith('path/logo.png')
       expect(result.id).toBe('tpl-1')
       expect(result.name).toBe('Verify Template')
@@ -80,7 +74,7 @@ describe('VerificationTemplateService', () => {
       await expect(service.getTemplateById(authInfo, 'missing')).rejects.toThrow(NotFoundException)
       expect(em.findOne).toHaveBeenCalledWith(
         VerificationTemplate,
-        { owner: mockWallet, id: 'missing' },
+        { owner: mockUser, id: 'missing' },
         expect.anything(),
       )
     })
@@ -144,7 +138,7 @@ describe('VerificationTemplateService', () => {
       ).rejects.toThrow(BadRequestException)
       expect(em.findOne).toHaveBeenCalledWith(
         VerificationTemplate,
-        { owner: mockWallet, name: 'Duplicate' },
+        { owner: mockUser, name: 'Duplicate' },
         expect.anything(),
       )
     })
@@ -261,11 +255,7 @@ describe('VerificationTemplateService', () => {
 
       await service.delete(authInfo, 'tpl-1')
 
-      expect(em.findOne).toHaveBeenCalledWith(
-        VerificationTemplate,
-        { owner: mockWallet, id: 'tpl-1' },
-        expect.anything(),
-      )
+      expect(em.findOne).toHaveBeenCalledWith(VerificationTemplate, { owner: mockUser, id: 'tpl-1' }, expect.anything())
       expect(mockTemplate.fields.removeAll).toHaveBeenCalled()
       expect(em.remove).toHaveBeenCalledWith(mockTemplate)
       expect(em.flush).toHaveBeenCalled()
@@ -277,7 +267,7 @@ describe('VerificationTemplateService', () => {
       await expect(service.delete(authInfo, 'missing')).rejects.toThrow(NotFoundException)
       expect(em.findOne).toHaveBeenCalledWith(
         VerificationTemplate,
-        { owner: mockWallet, id: 'missing' },
+        { owner: mockUser, id: 'missing' },
         expect.anything(),
       )
     })
@@ -290,7 +280,7 @@ describe('VerificationTemplateService', () => {
       await expect(service.patch(authInfo, 'missing', {} as any)).rejects.toThrow(NotFoundException)
       expect(em.findOne).toHaveBeenCalledWith(
         VerificationTemplate,
-        { owner: mockWallet, id: 'missing' },
+        { owner: mockUser, id: 'missing' },
         expect.anything(),
       )
     })
@@ -305,7 +295,7 @@ describe('VerificationTemplateService', () => {
         credentialFormat: 'SdJwtVc',
         network: 'key',
         did: 'did:key:z1',
-        owner: mockWallet,
+        owner: mockUser,
         schema: {
           id: 'schema-1',
           name: 'Test Schema',
@@ -352,7 +342,7 @@ describe('VerificationTemplateService', () => {
       const mockTemplate = {
         id: 'tpl-1',
         name: 'Old',
-        owner: mockWallet,
+        owner: mockUser,
         schema: { id: 'schema-1', fields: [] },
         fields: { length: 0, removeAll: vi.fn() },
       }

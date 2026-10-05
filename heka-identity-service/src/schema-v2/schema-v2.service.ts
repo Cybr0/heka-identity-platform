@@ -439,8 +439,8 @@ export class SchemaV2Service {
     }
 
     const [items, total] = await this.em.findAndCount(Schema, filter, {
-      fields: ['id', 'name', 'logo', 'bgColor', 'isHidden', 'orderIndex', 'owner', 'fields', 'registrations'],
-      populate: ['owner', 'fields', 'registrations'],
+      fields: ['id', 'name', 'logo', 'bgColor', 'isHidden', 'orderIndex', 'createdBy', 'fields', 'registrations'],
+      populate: ['createdBy', 'fields', 'registrations'],
       offset: request.offset,
       limit: request.limit,
       orderBy: [{ orderIndex: 'asc' }, { name: 'asc' }],
@@ -452,8 +452,8 @@ export class SchemaV2Service {
       limit: request.limit,
       items: items.map<GetSchemasListItem>((item) => ({
         id: item.id,
-        issuerId: item.owner.id,
-        issuerName: item.owner.displayName,
+        issuerId: item.createdBy.id,
+        issuerName: item.createdBy.name,
         name: item.name,
         logo: item.logo ? this.fileStorageService.url(item.logo) : undefined,
         bgColor: item.bgColor,
@@ -487,15 +487,15 @@ export class SchemaV2Service {
 
     const owner = this.em.getReference(Wallet, authInfo.walletId)
 
-    const schema = await this.em.findOne(Schema, { owner, id }, { populate: ['owner', 'fields', 'registrations'] })
+    const schema = await this.em.findOne(Schema, { owner, id }, { populate: ['createdBy', 'fields', 'registrations'] })
     if (!schema) {
       throw new NotFoundException(`Schema with id ${id} not found.`)
     }
 
     const result = new GetSchemaResponse({
       id: schema.id,
-      issuerId: schema.owner.id,
-      issuerName: schema.owner.displayName,
+      issuerId: schema.createdBy.id,
+      issuerName: schema.createdBy.name,
       name: schema.name,
       logo: schema.logo ? this.fileStorageService.url(schema.logo) : undefined,
       bgColor: schema.bgColor,
@@ -543,6 +543,7 @@ export class SchemaV2Service {
     // create schema
     const newSchema = new Schema({
       owner,
+      createdBy: authInfo.user,
       bgColor: request.bgColor,
       isHidden: false,
       name: request.name,

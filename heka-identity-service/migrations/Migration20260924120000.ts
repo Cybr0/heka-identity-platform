@@ -1,43 +1,37 @@
 import { Migration } from '@mikro-orm/migrations';
 
-// Schemas, templates and credential status lists are owned by the wallet (identity) instead of the
-// user (actor). Existing rows cannot be mapped to a wallet and are dropped: backward compatibility
-// is not required.
-const OWNED_TABLES = ['schema', 'issuance_template', 'verification_template', 'credential_status_list'];
-
-const DELETE_OWNED_ROWS = [
-  'delete from "issuance_template_field";',
-  'delete from "issuance_template";',
-  'delete from "verification_template_field";',
-  'delete from "verification_template";',
-  'delete from "schema_registration";',
-  'delete from "schema_field";',
-  'delete from "schema";',
-  'delete from "credential_status_list";',
-];
-
+// Schemas are owned by the wallet instead of the user, so everyone acting in a shared wallet (e.g. the members
+// of an organization) sees the same schemas. The user who created a schema is kept in `created_by_id`.
+//
+// Existing schemas move to a wallet of their creator: the wallet whose main DID registered the schema, otherwise
+// the creator's first wallet. Users who never changed role have exactly one wallet. No rows are deleted.
 export class Migration20260924120000 extends Migration {
 
   async up(): Promise<void> {
-    DELETE_OWNED_ROWS.forEach((sql) => this.addSql(sql));
+    this.addSql('alter table "schema" add column "created_by_id" varchar(255) null;');
+    this.addSql('update "schema" set "created_by_id" = "owner_id";');
+    this.addSql('alter table "schema" alter column "created_by_id" set not null;');
+    this.addSql('alter table "schema" add constraint "schema_created_by_id_foreign" foreign key ("created_by_id") references "user" ("id") on update cascade;');
 
-    for (const table of OWNED_TABLES) {
-      this.addSql(`alter table "${table}" drop constraint "${table}_owner_id_foreign";`);
-      this.addSql(`alter table "${table}" add constraint "${table}_owner_id_foreign" foreign key ("owner_id") references "wallet" ("id") on update cascade;`);
-    }
-
-    this.addSql('alter table "wallet" add column "display_name" varchar(255) null;');
+    this.addSql('alter table "schema" drop constraint "schema_owner_id_foreign";');
+    this.addSql(`update "schema" s set "owner_id" = coalesce(
+      (select w."id" from "wallet" w
+        join "user_wallets" uw on uw."wallet_id" = w."id"
+        join "schema_registration" r on r."did" = w."public_did"
+        where uw."user_id" = s."created_by_id" and r."schema_id" = s."id"
+        limit 1),
+      (select min(uw."wallet_id") from "user_wallets" uw where uw."user_id" = s."created_by_id")
+    );`);
+    this.addSql('alter table "schema" add constraint "schema_owner_id_foreign" foreign key ("owner_id") references "wallet" ("id") on update cascade;');
   }
 
   async down(): Promise<void> {
-    DELETE_OWNED_ROWS.forEach((sql) => this.addSql(sql));
+    this.addSql('alter table "schema" drop constraint "schema_owner_id_foreign";');
+    this.addSql('update "schema" set "owner_id" = "created_by_id";');
+    this.addSql('alter table "schema" add constraint "schema_owner_id_foreign" foreign key ("owner_id") references "user" ("id") on update cascade;');
 
-    for (const table of OWNED_TABLES) {
-      this.addSql(`alter table "${table}" drop constraint "${table}_owner_id_foreign";`);
-      this.addSql(`alter table "${table}" add constraint "${table}_owner_id_foreign" foreign key ("owner_id") references "user" ("id") on update cascade;`);
-    }
-
-    this.addSql('alter table "wallet" drop column "display_name";');
+    this.addSql('alter table "schema" drop constraint "schema_created_by_id_foreign";');
+    this.addSql('alter table "schema" drop column "created_by_id";');
   }
 
 }

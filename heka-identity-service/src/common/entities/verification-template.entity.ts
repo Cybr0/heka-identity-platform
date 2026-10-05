@@ -5,14 +5,14 @@ import { AriesCredentialFormat, CredentialFormat, DidMethod, OpenId4VcCredential
 
 import { Identified } from './identified.entity'
 import { Schema } from './schema.entity'
+import { User } from './user.entity'
 import { VerificationTemplateField } from './verification-template-field.entity'
-import { Wallet } from './wallet.entity'
 
 @Entity()
 export class VerificationTemplate extends Identified {
-  @ManyToOne(() => Wallet, { nullable: false, lazy: true })
+  @ManyToOne(() => User, { nullable: false, lazy: true })
   @Index()
-  public owner!: Wallet
+  public owner!: User
 
   @Property({ nullable: false, length: 500, type: 'string' })
   public name!: string

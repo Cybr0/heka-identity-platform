@@ -6,13 +6,13 @@ import { AriesCredentialFormat, CredentialFormat, DidMethod, OpenId4VcCredential
 import { Identified } from './identified.entity'
 import { IssuanceTemplateField } from './issuance-template-field.entity'
 import { Schema } from './schema.entity'
-import { Wallet } from './wallet.entity'
+import { User } from './user.entity'
 
 @Entity()
 export class IssuanceTemplate extends Identified {
-  @ManyToOne(() => Wallet, { nullable: false, lazy: true })
+  @ManyToOne(() => User, { nullable: false, lazy: true })
   @Index()
-  public owner!: Wallet
+  public owner!: User
 
   @Property({ nullable: false, length: 500, type: 'string' })
   public name!: string

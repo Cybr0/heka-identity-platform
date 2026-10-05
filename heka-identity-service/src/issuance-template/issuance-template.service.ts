@@ -136,7 +136,7 @@ export class IssuanceTemplateService {
   public getTemplateById = async (authInfo: AuthInfo, id: string): Promise<IssuanceTemplateResponse> => {
     const template = await this.em.findOne(
       IssuanceTemplate,
-      { owner: this.em.getReference(Wallet, authInfo.walletId), id },
+      { owner: authInfo.user, id },
       {
         populate: ['owner', 'schema', 'schema.fields', 'schema.registrations', 'fields', 'fields.schemaField'],
       },
@@ -193,7 +193,7 @@ export class IssuanceTemplateService {
 
     const conditions = []
 
-    conditions.push({ owner: this.em.getReference(Wallet, authInfo.walletId) })
+    conditions.push({ owner: authInfo.user })
 
     if (request.text) {
       conditions.push({ name: { $like: `%${request.text}%` } })
@@ -291,7 +291,7 @@ export class IssuanceTemplateService {
     const logger = this.logger.child('create')
     logger.trace('>')
 
-    const owner = this.em.getReference(Wallet, authInfo.walletId)
+    const owner = authInfo.user
 
     // check unique
     if (await this.em.findOne(IssuanceTemplate, { owner, name: request.name }, { populate: ['owner'] })) {
@@ -301,7 +301,7 @@ export class IssuanceTemplateService {
     // check schema exist
     const schema = await this.em.findOne(
       Schema,
-      { owner, id: request.schemaId },
+      { owner: this.em.getReference(Wallet, authInfo.walletId), id: request.schemaId },
       { populate: ['fields', 'registrations'] },
     )
     if (!schema) {
@@ -368,7 +368,7 @@ export class IssuanceTemplateService {
     const logger = this.logger.child('patch')
     logger.trace('>')
 
-    const owner = this.em.getReference(Wallet, authInfo.walletId)
+    const owner = authInfo.user
 
     const template = await this.em.findOne(
       IssuanceTemplate,
@@ -397,7 +397,11 @@ export class IssuanceTemplateService {
     let schema
     if (request.schemaId) {
       // check schema exist
-      schema = await this.em.findOne(Schema, { owner, id: request.schemaId }, { populate: ['fields', 'registrations'] })
+      schema = await this.em.findOne(
+        Schema,
+        { owner: this.em.getReference(Wallet, authInfo.walletId), id: request.schemaId },
+        { populate: ['fields', 'registrations'] },
+      )
       if (!schema) {
         throw new NotFoundException(`Schema ${request.schemaId} not exists.`)
       }
@@ -459,7 +463,7 @@ export class IssuanceTemplateService {
 
     const template = await this.em.findOne(
       IssuanceTemplate,
-      { id, owner: this.em.getReference(Wallet, authInfo.walletId) },
+      { id, owner: authInfo.user },
       { populate: ['owner', 'fields'] },
     )
     if (!template) {

@@ -34,11 +34,12 @@ describe('SchemaV2Service', () => {
   let openId4VcIssuerService: OpenId4VcIssuerService
   let tenantAgent: TenantAgent
 
-  // Schemas are owned by the wallet the actor acts in, not by the actor
-  const mockWallet = { id: 'Member_user-1_in_Organization_1', displayName: 'Test User' }
+  // Schemas are owned by the wallet the user acts in; the user who created a schema is its issuer
+  const mockWallet = { id: 'Issuer_user-1_in_Organization_1' }
+  const mockUser = { id: 'user-1', name: 'Test User' }
   const authInfo = {
     userId: 'user-1',
-    user: { id: 'user-1', name: 'Test User' } as any,
+    user: mockUser as any,
     userName: 'testuser',
     role: Role.Issuer,
     orgId: '1',
@@ -49,7 +50,7 @@ describe('SchemaV2Service', () => {
   beforeEach(() => {
     logger = createMock<Logger>()
     em = createMock<EntityManager>()
-    vi.mocked(em.getReference).mockReturnValue(mockWallet as any)
+    vi.mocked(em.getReference).mockReturnValue(mockWallet)
     fileStorageService = createMock<FileStorageService>()
     anoncredsRegistryService = createMock<AnoncredsRegistryService>()
     revocationRegistryService = createMock<RevocationRegistryService>()
@@ -91,6 +92,7 @@ describe('SchemaV2Service', () => {
           isHidden: false,
           orderIndex: 0,
           owner: mockWallet,
+          createdBy: mockUser,
           fields: mockFields,
           registrations: mockRegistrations,
         },
@@ -106,6 +108,9 @@ describe('SchemaV2Service', () => {
       expect(result.items).toHaveLength(1)
       expect(result.items[0].name).toBe('Test Schema')
       expect(result.items[0].logo).toBe('https://cdn/logo.png')
+      // The issuer is the user who created the schema, not the wallet that owns it
+      expect(result.items[0].issuerId).toBe('user-1')
+      expect(result.items[0].issuerName).toBe('Test User')
     })
 
     test('returns empty list when no schemas', async () => {
@@ -129,6 +134,7 @@ describe('SchemaV2Service', () => {
         isHidden: false,
         orderIndex: 0,
         owner: mockWallet,
+        createdBy: mockUser,
         fields: { toArray: () => [{ id: 'f1', name: 'name', orderIndex: 0 }] },
         registrations: {
           map: vi.fn().mockReturnValue([]),
@@ -143,6 +149,8 @@ describe('SchemaV2Service', () => {
       expect(result.id).toBe('schema-1')
       expect(result.name).toBe('My Schema')
       expect(result.logo).toBeUndefined()
+      expect(result.issuerId).toBe('user-1')
+      expect(result.issuerName).toBe('Test User')
     })
 
     test('throws NotFoundException when schema not found', async () => {
@@ -161,6 +169,7 @@ describe('SchemaV2Service', () => {
         isHidden: false,
         orderIndex: 0,
         owner: mockWallet,
+        createdBy: mockUser,
         fields: {
           toArray: () => [
             { id: 'f2', name: 'second', orderIndex: 2 },
@@ -206,7 +215,13 @@ describe('SchemaV2Service', () => {
     })
 
     test('throws BadRequestException when already registered', async () => {
-      const mockSchema = { id: 'schema-1', name: 'Test', owner: mockWallet, fields: { toArray: () => [] } }
+      const mockSchema = {
+        id: 'schema-1',
+        name: 'Test',
+        owner: mockWallet,
+        createdBy: mockUser,
+        fields: { toArray: () => [] },
+      }
       vi.mocked(em.findOne).mockImplementation((entity: any, filter: any) => {
         if (entity === Schema) return Promise.resolve(mockSchema as any)
         if (filter?.schema) return Promise.resolve({ id: 'existing-reg' } as any)
@@ -223,7 +238,13 @@ describe('SchemaV2Service', () => {
     })
 
     test('throws BadRequestException for unsupported protocol', async () => {
-      const mockSchema = { id: 'schema-1', name: 'Test', owner: mockWallet, fields: { toArray: () => [] } }
+      const mockSchema = {
+        id: 'schema-1',
+        name: 'Test',
+        owner: mockWallet,
+        createdBy: mockUser,
+        fields: { toArray: () => [] },
+      }
       vi.mocked(em.findOne).mockImplementation((entity: any) => {
         if (entity === Schema) return Promise.resolve(mockSchema as any)
         return Promise.resolve(null)
@@ -242,6 +263,7 @@ describe('SchemaV2Service', () => {
         id: 'schema-1',
         name: 'Test',
         owner: mockWallet,
+        createdBy: mockUser,
         registrations: { map: vi.fn().mockReturnValue([]), count: () => 0 },
         fields: {
           toArray: () => [
@@ -341,6 +363,7 @@ describe('SchemaV2Service', () => {
         isHidden: false,
         orderIndex: 0,
         owner: mockWallet,
+        createdBy: mockUser,
         fields: { toArray: () => [] },
         registrations: {
           filter: (fn: any) => [].filter(fn),
@@ -375,6 +398,7 @@ describe('SchemaV2Service', () => {
         isHidden: false,
         orderIndex: 0,
         owner: mockWallet,
+        createdBy: mockUser,
         fields: { toArray: () => [] },
         registrations: {
           filter: (fn: any) => [].filter(fn),
@@ -401,6 +425,7 @@ describe('SchemaV2Service', () => {
         isHidden: false,
         orderIndex: 0,
         owner: mockWallet,
+        createdBy: mockUser,
         fields: { toArray: () => [] },
         registrations: {
           filter: (fn: any) => [].filter(fn),
@@ -424,6 +449,7 @@ describe('SchemaV2Service', () => {
         orderIndex: 0,
         isHidden: false,
         owner: mockWallet,
+        createdBy: mockUser,
       }
       const mockSchema: any = {
         id: 'schema-1',
@@ -433,6 +459,7 @@ describe('SchemaV2Service', () => {
         isHidden: false,
         orderIndex: 1,
         owner: mockWallet,
+        createdBy: mockUser,
         fields: { toArray: () => [] },
         registrations: {
           filter: (fn: any) => [].filter(fn),
@@ -464,6 +491,7 @@ describe('SchemaV2Service', () => {
         id: 'schema-1',
         name: 'My Schema',
         owner: mockWallet,
+        createdBy: mockUser,
         fields: { toArray: () => [] },
         registrations: { filter: (fn: any) => [].filter(fn) },
       }
@@ -492,6 +520,7 @@ describe('SchemaV2Service', () => {
         isHidden: false,
         orderIndex: 0,
         owner: mockWallet,
+        createdBy: mockUser,
         fields: { toArray: () => [] },
         registrations: {
           filter: (fn: any) => [].filter(fn),
@@ -526,6 +555,7 @@ describe('SchemaV2Service', () => {
         isHidden: false,
         orderIndex: 0,
         owner: mockWallet,
+        createdBy: mockUser,
         fields: { toArray: () => [] },
         registrations: {
           filter: (fn: any) => [registration].filter(fn),
@@ -576,6 +606,7 @@ describe('SchemaV2Service', () => {
         isHidden: false,
         orderIndex: 1,
         owner: mockWallet,
+        createdBy: mockUser,
         fields: { toArray: () => [{ id: 'f1', name: 'field1', orderIndex: 0 }] },
         registrations: {
           map: vi.fn().mockReturnValue([]),
@@ -601,6 +632,8 @@ describe('SchemaV2Service', () => {
       expect(result.id).toBe('schema-new')
       expect(result.name).toBe('New Schema')
       expect(em.flush).toHaveBeenCalled()
+      // The new schema belongs to the caller's wallet and records the caller as its creator
+      expect(em.persist).toHaveBeenCalledWith(expect.objectContaining({ owner: mockWallet, createdBy: mockUser }))
     })
 
     test('creates schema with logoFile', async () => {
@@ -612,6 +645,7 @@ describe('SchemaV2Service', () => {
         isHidden: false,
         orderIndex: 0,
         owner: mockWallet,
+        createdBy: mockUser,
         fields: { toArray: () => [] },
         registrations: { map: vi.fn().mockReturnValue([]), count: () => 0 },
       }
@@ -643,6 +677,7 @@ describe('SchemaV2Service', () => {
       id: 'schema-1',
       name: 'TestSchema',
       owner: mockWallet,
+      createdBy: mockUser,
       fields: {
         toArray: () => [
           { id: 'f1', name: 'field1', orderIndex: 0 },

@@ -129,7 +129,7 @@ export class VerificationTemplateService {
   public getTemplateById = async (authInfo: AuthInfo, id: string): Promise<VerificationTemplateResponse> => {
     const template = await this.em.findOne(
       VerificationTemplate,
-      { owner: this.em.getReference(Wallet, authInfo.walletId), id },
+      { owner: authInfo.user, id },
       { populate: ['owner', 'schema', 'schema.fields', 'schema.registrations', 'fields', 'fields.schemaField'] },
     )
     if (!template) {
@@ -182,7 +182,7 @@ export class VerificationTemplateService {
 
     const conditions = []
 
-    conditions.push({ owner: this.em.getReference(Wallet, authInfo.walletId) })
+    conditions.push({ owner: authInfo.user })
 
     if (request.text) {
       conditions.push({ name: { $like: `%${request.text}%` } })
@@ -279,7 +279,7 @@ export class VerificationTemplateService {
     const logger = this.logger.child('create')
     logger.trace('>')
 
-    const owner = this.em.getReference(Wallet, authInfo.walletId)
+    const owner = authInfo.user
 
     // check network
     if (request.protocol === ProtocolType.Aries && !request.network) {
@@ -292,7 +292,11 @@ export class VerificationTemplateService {
     }
 
     // check schema exist
-    const schema = await this.em.findOne(Schema, { owner, id: request.schemaId }, { populate: ['fields'] })
+    const schema = await this.em.findOne(
+      Schema,
+      { owner: this.em.getReference(Wallet, authInfo.walletId), id: request.schemaId },
+      { populate: ['fields'] },
+    )
     if (!schema) {
       throw new NotFoundException(`Schema ${request.schemaId} not exists.`)
     }
@@ -340,7 +344,7 @@ export class VerificationTemplateService {
     const logger = this.logger.child('patch')
     logger.trace('>')
 
-    const owner = this.em.getReference(Wallet, authInfo.walletId)
+    const owner = authInfo.user
 
     const template = await this.em.findOne(
       VerificationTemplate,
@@ -353,7 +357,11 @@ export class VerificationTemplateService {
 
     let schema
     if (request.schemaId) {
-      schema = await this.em.findOne(Schema, { owner, id: request.schemaId }, { populate: ['fields', 'registrations'] })
+      schema = await this.em.findOne(
+        Schema,
+        { owner: this.em.getReference(Wallet, authInfo.walletId), id: request.schemaId },
+        { populate: ['fields', 'registrations'] },
+      )
       if (!schema) {
         throw new NotFoundException(`Schema ${request.schemaId} not exists.`)
       }
@@ -408,7 +416,7 @@ export class VerificationTemplateService {
     const logger = this.logger.child('delete')
     logger.trace('>')
 
-    const owner = this.em.getReference(Wallet, authInfo.walletId)
+    const owner = authInfo.user
 
     const template = await this.em.findOne(VerificationTemplate, { owner, id }, { populate: ['owner', 'fields'] })
     if (!template) {
