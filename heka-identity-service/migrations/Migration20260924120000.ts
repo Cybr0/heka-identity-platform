@@ -4,7 +4,8 @@ import { Migration } from '@mikro-orm/migrations';
 // of an organization) sees the same schemas. The user who created a schema is kept in `created_by_id`.
 //
 // Existing schemas move to a wallet of their creator: the wallet whose main DID registered the schema, otherwise
-// the creator's first wallet. Users who never changed role have exactly one wallet. No rows are deleted.
+// the creator's wallet whose ID sorts first alphabetically (wallets have no creation date). Users who never changed
+// role have exactly one wallet. No rows are deleted.
 export class Migration20260924120000 extends Migration {
 
   async up(): Promise<void> {
