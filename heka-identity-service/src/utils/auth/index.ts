@@ -8,33 +8,27 @@ export function getOrganizationWalletId(orgId: string): string {
   return `Organization_${orgId}`
 }
 
-/**
- * The wallet a token acts in. It depends only on the token, never on the role model mode:
- * - `Admin`: the platform identity wallet, shared by every Admin;
- * - `OrgAdmin` / `OrgManager`: the organization identity wallet;
- * - `OrgMember` / `Issuer` / `Verifier`: the member's personal wallet in the organization, the same for all three roles;
- * - `User`: the holder's personal wallet.
- */
 export function getWalletId({ role, userId, orgId }: { role: Role; userId: string; orgId?: string }): string {
   switch (role) {
     case Role.Admin:
       if (orgId) {
         throw new UnauthorizedException()
       }
+      // Every Admin acts in the shared administration wallet
       return ADMINISTRATION_WALLET_ID
     case Role.OrgAdmin:
     case Role.OrgManager:
+    case Role.OrgMember:
       if (!orgId) {
         throw new UnauthorizedException()
       }
       return getOrganizationWalletId(orgId)
-    case Role.OrgMember:
     case Role.Issuer:
     case Role.Verifier:
       if (!orgId) {
         throw new UnauthorizedException()
       }
-      return `Member_${userId}_in_Organization_${orgId}`
+      return `${role}_${userId}_in_Organization_${orgId}`
     case Role.User:
       if (orgId) {
         throw new UnauthorizedException()
@@ -45,10 +39,6 @@ export function getWalletId({ role, userId, orgId }: { role: Role; userId: strin
   }
 }
 
-/**
- * The wallet whose public DID must exist before this role may create one. It is an authorization
- * prerequisite only: the DID is always created in the caller's own wallet.
- */
 export function getDidControllerWalletId({ role, orgId }: { role: Role; orgId?: string }): string | null {
   switch (role) {
     case Role.Admin:
@@ -62,7 +52,6 @@ export function getDidControllerWalletId({ role, orgId }: { role: Role; orgId?: 
       }
       return ADMINISTRATION_WALLET_ID
     case Role.Issuer:
-    case Role.Verifier:
       if (!orgId) {
         throw new UnauthorizedException()
       }

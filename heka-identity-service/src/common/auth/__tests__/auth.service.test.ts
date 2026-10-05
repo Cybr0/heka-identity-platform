@@ -17,14 +17,14 @@ describe('getWalletId', () => {
   test.each([
     // Every Admin acts as the platform identity
     [{ role: Role.Admin, userId: '11' }, 'Administration'],
-    // OrgAdmin / OrgManager act as the organization identity
+    // OrgAdmin / OrgManager / OrgMember share the organization wallet
     [{ role: Role.OrgAdmin, userId: '12', orgId: '1' }, 'Organization_1'],
     [{ role: Role.OrgManager, userId: '13', orgId: '1' }, 'Organization_1'],
-    // OrgMember / Issuer / Verifier share one personal member wallet per organization
-    [{ role: Role.OrgMember, userId: '14', orgId: '1' }, 'Member_14_in_Organization_1'],
-    [{ role: Role.Issuer, userId: '14', orgId: '1' }, 'Member_14_in_Organization_1'],
-    [{ role: Role.Verifier, userId: '14', orgId: '1' }, 'Member_14_in_Organization_1'],
-    [{ role: Role.Verifier, userId: '14', orgId: '2' }, 'Member_14_in_Organization_2'],
+    [{ role: Role.OrgMember, userId: '14', orgId: '1' }, 'Organization_1'],
+    // Issuer / Verifier have a personal wallet per role and organization
+    [{ role: Role.Issuer, userId: '15', orgId: '1' }, 'Issuer_15_in_Organization_1'],
+    [{ role: Role.Issuer, userId: '15', orgId: '2' }, 'Issuer_15_in_Organization_2'],
+    [{ role: Role.Verifier, userId: '16', orgId: '1' }, 'Verifier_16_in_Organization_1'],
     [{ role: Role.User, userId: '17' }, 'User_17'],
   ])("for %o returns '%s'", (params: { role: Role; userId: string; orgId?: string }, expected: string) => {
     const actual = getWalletId(params)
@@ -49,26 +49,28 @@ describe('getDidControllerWalletId', () => {
     [{ role: Role.Admin }, null],
     [{ role: Role.OrgAdmin, orgId: '1' }, 'Administration'],
     [{ role: Role.Issuer, orgId: '1' }, 'Organization_1'],
-    [{ role: Role.Verifier, orgId: '1' }, 'Organization_1'],
   ])('for %o returns %s', (params: { role: Role; orgId?: string }, expected: string | null) => {
     expect(getDidControllerWalletId(params)).toBe(expected)
   })
 
-  test.each([{ role: Role.OrgManager, orgId: '1' }, { role: Role.OrgMember, orgId: '1' }, { role: Role.User }])(
+  test.each([
+    { role: Role.OrgManager, orgId: '1' },
+    { role: Role.OrgMember, orgId: '1' },
+    { role: Role.Verifier, orgId: '1' },
+    { role: Role.User },
+  ])(
     'for %o throws ForbiddenException because the role cannot create a public DID',
     (params: { role: Role; orgId?: string }) => {
       expect(() => getDidControllerWalletId(params)).toThrow(ForbiddenException)
     },
   )
 
-  test.each([
-    { role: Role.Admin, orgId: '1' },
-    { role: Role.OrgAdmin },
-    { role: Role.Issuer },
-    { role: Role.Verifier },
-  ])('for %o throws UnauthorizedException', (params: { role: Role; orgId?: string }) => {
-    expect(() => getDidControllerWalletId(params)).toThrow(UnauthorizedException)
-  })
+  test.each([{ role: Role.Admin, orgId: '1' }, { role: Role.OrgAdmin }, { role: Role.Issuer }])(
+    'for %o throws UnauthorizedException',
+    (params: { role: Role; orgId?: string }) => {
+      expect(() => getDidControllerWalletId(params)).toThrow(UnauthorizedException)
+    },
+  )
 })
 
 describe('administersWallet', () => {
@@ -102,7 +104,7 @@ describe('AuthService', () => {
 
   const makeWallet = (overrides: Partial<Wallet> = {}): Wallet =>
     ({
-      id: 'Member_11_in_Organization_7',
+      id: 'Issuer_11_in_Organization_7',
       tenantId: 'tenant-xyz',
       ...overrides,
     }) as Wallet
@@ -151,10 +153,10 @@ describe('AuthService', () => {
 
       expect(jwtService.verifyAsync).toHaveBeenCalledWith('my-jwt')
       expect(em.findOne).toHaveBeenNthCalledWith(1, User, { id: '11' })
-      expect(em.findOne).toHaveBeenNthCalledWith(2, Wallet, { id: 'Member_11_in_Organization_7' })
+      expect(em.findOne).toHaveBeenNthCalledWith(2, Wallet, { id: 'Issuer_11_in_Organization_7' })
       expect(result.userId).toBe('11')
       expect(result.role).toBe(Role.Issuer)
-      expect(result.walletId).toBe('Member_11_in_Organization_7')
+      expect(result.walletId).toBe('Issuer_11_in_Organization_7')
       expect(result.tenantId).toBe('tenant-xyz')
     })
   })
@@ -182,14 +184,14 @@ describe('AuthService', () => {
       const result = await service.validateTokenPayload(payload)
 
       expect(em.findOne).toHaveBeenNthCalledWith(1, User, { id: '11' })
-      expect(em.findOne).toHaveBeenNthCalledWith(2, Wallet, { id: 'Member_11_in_Organization_7' })
+      expect(em.findOne).toHaveBeenNthCalledWith(2, Wallet, { id: 'Issuer_11_in_Organization_7' })
       expect(result).toEqual({
         userId: '11',
         user,
         userName: 'Alice',
         role: Role.Issuer,
         orgId: '7',
-        walletId: 'Member_11_in_Organization_7',
+        walletId: 'Issuer_11_in_Organization_7',
         tenantId: 'tenant-xyz',
       })
       expect(user.wallets.add).not.toHaveBeenCalled()
@@ -206,7 +208,7 @@ describe('AuthService', () => {
       await service.validateTokenPayload(payload)
 
       expect(em.findOne).toHaveBeenNthCalledWith(1, User, { id: '11' })
-      expect(em.findOne).toHaveBeenNthCalledWith(2, Wallet, { id: 'Member_11_in_Organization_7' })
+      expect(em.findOne).toHaveBeenNthCalledWith(2, Wallet, { id: 'Issuer_11_in_Organization_7' })
       expect(user.wallets.add).toHaveBeenCalledWith(wallet)
       expect(em.flush).toHaveBeenCalled()
     })
@@ -233,7 +235,7 @@ describe('AuthService', () => {
       const result = await service.validateTokenPayload(payload)
 
       expect(em.findOne).toHaveBeenNthCalledWith(1, User, { id: 'new-user' })
-      expect(em.findOne).toHaveBeenNthCalledWith(2, Wallet, { id: 'Member_new-user_in_Organization_7' })
+      expect(em.findOne).toHaveBeenNthCalledWith(2, Wallet, { id: 'Issuer_new-user_in_Organization_7' })
       expect(em.flush).toHaveBeenCalled()
       expect(result.userId).toBe('new-user')
     })
@@ -254,9 +256,9 @@ describe('AuthService', () => {
       const result = await service.validateTokenPayload(payload)
 
       expect(em.findOne).toHaveBeenNthCalledWith(1, User, { id: '11' })
-      expect(em.findOne).toHaveBeenNthCalledWith(2, Wallet, { id: 'Member_11_in_Organization_7' })
+      expect(em.findOne).toHaveBeenNthCalledWith(2, Wallet, { id: 'Issuer_11_in_Organization_7' })
       expect(agent.modules.tenants.createTenant).toHaveBeenCalledWith({
-        config: { label: 'Member_11_in_Organization_7' },
+        config: { label: 'Issuer_11_in_Organization_7' },
       })
       expect(createLinkSecret).toHaveBeenCalled()
       expect(result.tenantId).toBe('new-tenant-id')

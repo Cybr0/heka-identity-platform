@@ -95,13 +95,13 @@ describe('UserService', () => {
       expect(userRepository.persistAndFlush).not.toHaveBeenCalled()
     })
 
-    it('should always register the user as an OrgMember of the platform organization', async () => {
+    it('should always register the user with the User role', async () => {
       userRepository.findOne.mockResolvedValue(null)
 
       await service.register({ name: 'bob', password: 'StrongP@ss1' })
 
       const persistedUser = userRepository.persistAndFlush.mock.calls[0]?.[0]
-      expect(persistedUser?.role).toBe(UserRole.OrgMember)
+      expect(persistedUser?.role).toBe(UserRole.User)
     })
   })
 

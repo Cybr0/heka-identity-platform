@@ -12,7 +12,6 @@ import { sleep } from 'src/utils/timers'
 import { initializeMikroOrm, startTestApp } from './helpers'
 import { createAuthToken } from './helpers/jwt'
 
-// The token a self-registered user gets from the bundled Auth Service: OrgMember of the platform organization
 const PLATFORM_ORG_ID = 'platform-org'
 const orgRoles = new Set([Role.OrgAdmin, Role.OrgManager, Role.OrgMember, Role.Issuer, Role.Verifier])
 const tokenFor = (role: Role, userId: string = uuid(), orgId: string = PLATFORM_ORG_ID) =>
@@ -51,8 +50,9 @@ describe('E2E role model', () => {
   describe('disabled (default): self-service onboarding', () => {
     beforeEach(() => startApp(false))
 
-    test('a sign-up (OrgMember) prepares its own wallet and uses every capability', async () => {
-      const token = await tokenFor(Role.OrgMember)
+    // A self-registered user gets the `User` role from the bundled Auth Service
+    test('a sign-up (User) prepares its own wallet and can use every endpoint', async () => {
+      const token = await tokenFor(Role.User)
 
       const prepareResponse = await post('/prepare-wallet', token)
       expect(prepareResponse.status).toBe(201)
@@ -65,9 +65,9 @@ describe('E2E role model', () => {
       expect(invitationResponse.status).toBe(200)
     })
 
-    test('two members of the platform organization are isolated', async () => {
-      const aliceToken = await tokenFor(Role.OrgMember)
-      const bobToken = await tokenFor(Role.OrgMember)
+    test('two sign-ups are isolated', async () => {
+      const aliceToken = await tokenFor(Role.User)
+      const bobToken = await tokenFor(Role.User)
 
       const aliceDid = (await post('/prepare-wallet', aliceToken)).body.did
       const bobDid = (await post('/prepare-wallet', bobToken)).body.did

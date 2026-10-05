@@ -76,7 +76,7 @@ describe('E2E wallet scope', () => {
     expect(await getOwnDidsCount(userAuthToken)).toBe(0)
   })
 
-  test('OrgAdmin and OrgManager act in the organization identity wallet; members do not', async () => {
+  test('OrgAdmin, OrgManager and OrgMember share the organization wallet', async () => {
     const bigOrgId = uuid()
     const smallOrgId = uuid()
 
@@ -89,36 +89,42 @@ describe('E2E wallet scope', () => {
     await createSchema(bigOrgAdminAuthToken, 'Organization schema')
 
     expect(await getOwnDidsCount(bigOrgManagerAuthToken)).toBe(1)
-    // Resources belong to the organization wallet, not to the actor who created them
+    expect(await getOwnDidsCount(bigOrgMemberAuthToken)).toBe(1)
+    // Schemas belong to the organization wallet, not to the user who created them
     expect(await getSchemaNames(bigOrgManagerAuthToken)).toEqual(['Organization schema'])
+    expect(await getSchemaNames(bigOrgMemberAuthToken)).toEqual(['Organization schema'])
 
-    expect(await getOwnDidsCount(bigOrgMemberAuthToken)).toBe(0)
-    expect(await getSchemaNames(bigOrgMemberAuthToken)).toEqual([])
     expect(await getOwnDidsCount(smallOrgAdminAuthToken)).toBe(0)
+    expect(await getSchemaNames(smallOrgAdminAuthToken)).toEqual([])
   })
 
-  test('OrgMember, Issuer and Verifier of one user share a personal member wallet per organization', async () => {
+  test('Issuer and Verifier have a personal wallet per role and organization', async () => {
     const bigOrgId = uuid()
     const smallOrgId = uuid()
     const memberId = uuid()
 
     const issuerAuthToken = await createAuthToken(memberId, Role.Issuer, bigOrgId)
+    const sameIssuerAuthToken = await createAuthToken(memberId, Role.Issuer, bigOrgId)
     const verifierAuthToken = await createAuthToken(memberId, Role.Verifier, bigOrgId)
-    const orgMemberAuthToken = await createAuthToken(memberId, Role.OrgMember, bigOrgId)
     const otherOrgIssuerAuthToken = await createAuthToken(memberId, Role.Issuer, smallOrgId)
-    const otherMemberAuthToken = await createAuthToken(uuid(), Role.Issuer, bigOrgId)
+    const otherIssuerAuthToken = await createAuthToken(uuid(), Role.Issuer, bigOrgId)
 
     await createDid(issuerAuthToken)
-    await createSchema(issuerAuthToken, 'Personal schema')
 
-    // A role change within the membership keeps the wallet and its resources
-    expect(await getOwnDidsCount(verifierAuthToken)).toBe(1)
-    expect(await getOwnDidsCount(orgMemberAuthToken)).toBe(1)
-    expect(await getSchemaNames(orgMemberAuthToken)).toEqual(['Personal schema'])
-
+    expect(await getOwnDidsCount(sameIssuerAuthToken)).toBe(1)
+    expect(await getOwnDidsCount(verifierAuthToken)).toBe(0)
     expect(await getOwnDidsCount(otherOrgIssuerAuthToken)).toBe(0)
-    expect(await getOwnDidsCount(otherMemberAuthToken)).toBe(0)
-    expect(await getSchemaNames(otherMemberAuthToken)).toEqual([])
+    expect(await getOwnDidsCount(otherIssuerAuthToken)).toBe(0)
+  })
+
+  test('every User has a personal wallet', async () => {
+    const userAuthToken = await createAuthToken(uuid(), Role.User)
+    const otherUserAuthToken = await createAuthToken(uuid(), Role.User)
+
+    await createDid(userAuthToken)
+
+    expect(await getOwnDidsCount(userAuthToken)).toBe(1)
+    expect(await getOwnDidsCount(otherUserAuthToken)).toBe(0)
   })
 
   async function getOwnDidsCount(authToken: string): Promise<number> {

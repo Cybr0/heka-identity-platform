@@ -5,7 +5,6 @@ import { Server } from 'net'
 import request from 'supertest'
 
 import { AuthorizationTokenType } from '../src/common/const'
-import { AppConfig } from '../src/core/config/configs/app.config'
 import { jwtConfigDefaults } from '../src/core/config/configs/jwt.config'
 import { UserRole } from '../src/core/database'
 import { LoginRequest, LogoutRequest, RefreshRequest } from '../src/oauth/dto'
@@ -64,12 +63,12 @@ describe('E2E authorization', () => {
     expect(loginUserResponse.body.refresh).toBeDefined()
     expect(loginUserResponse.body.token_type).toBe(AuthorizationTokenType)
 
-    // Every sign-up is an OrgMember of the platform organization (ORG_ID)
+    // Every sign-up is a `User`, which belongs to no organization
     const accessPayload = JSON.parse(
       Buffer.from(loginUserResponse.body.access.split('.')[1], 'base64').toString('utf8'),
     ) as { roles: string[]; org_id?: string }
-    expect(accessPayload.roles).toEqual([UserRole.OrgMember])
-    expect(accessPayload.org_id).toBe(new AppConfig().orgId)
+    expect(accessPayload.roles).toEqual([UserRole.User])
+    expect(accessPayload.org_id).toBeUndefined()
 
     await new Promise((res) => setTimeout(res, 1000))
 

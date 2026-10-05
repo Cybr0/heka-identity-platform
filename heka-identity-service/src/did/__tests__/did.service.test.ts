@@ -209,19 +209,18 @@ describe('DidService', () => {
 
     test('returns 409 when the wallet already has its main-method DID, before the controller check', async () => {
       vi.mocked(em.findOneOrFail).mockResolvedValue(
-        entityStub<Wallet>({ id: 'Member_user-1_in_Organization_org-1', publicDid: 'did:key:existing' }),
+        entityStub<Wallet>({ id: 'Issuer_user-1_in_Organization_org-1', publicDid: 'did:key:existing' }),
       )
 
       await expect(
-        didService.create(makeAuthInfo(Role.Issuer, 'Member_user-1_in_Organization_org-1', 'org-1'), {}),
+        didService.create(makeAuthInfo(Role.Issuer, 'Issuer_user-1_in_Organization_org-1', 'org-1'), {}),
       ).rejects.toThrow(ConflictException)
       expect(em.findOne).not.toHaveBeenCalled()
     })
 
     test.each([
       [Role.OrgAdmin, 'Organization_org-1', 'Administration'],
-      [Role.Issuer, 'Member_user-1_in_Organization_org-1', 'Organization_org-1'],
-      [Role.Verifier, 'Member_user-1_in_Organization_org-1', 'Organization_org-1'],
+      [Role.Issuer, 'Issuer_user-1_in_Organization_org-1', 'Organization_org-1'],
     ])('%s gets 422 until its controller %s has a public DID', async (role, walletId, controllerId) => {
       vi.mocked(em.findOneOrFail).mockResolvedValue(entityStub<Wallet>({ id: walletId, publicDid: undefined }))
       vi.mocked(em.findOne).mockResolvedValue(entityStub<Wallet>({ id: controllerId, publicDid: undefined }))
@@ -235,14 +234,14 @@ describe('DidService', () => {
 
     test('once the controller has a public DID, the DID is created in the caller tenant', async () => {
       vi.mocked(em.findOneOrFail).mockResolvedValue(
-        entityStub<Wallet>({ id: 'Member_user-1_in_Organization_org-1', publicDid: undefined }),
+        entityStub<Wallet>({ id: 'Issuer_user-1_in_Organization_org-1', publicDid: undefined }),
       )
       vi.mocked(em.findOne).mockResolvedValue(
         entityStub<Wallet>({ id: 'Organization_org-1', publicDid: 'did:key:org', tenantId: 'org-tenant' }),
       )
       vi.mocked(didRegistrarService.createDid).mockResolvedValue(didDocumentStub({ id: 'did:indy:test-ns:issuer' }))
 
-      await didService.create(makeAuthInfo(Role.Issuer, 'Member_user-1_in_Organization_org-1', 'org-1'), {
+      await didService.create(makeAuthInfo(Role.Issuer, 'Issuer_user-1_in_Organization_org-1', 'org-1'), {
         method: 'indy',
       })
 
@@ -330,14 +329,14 @@ describe('DidService', () => {
 
     test('with the role model disabled the controller check is skipped', async () => {
       const service = makeService(false)
-      const wallet = entityStub<Wallet>({ id: 'Member_user-1_in_Organization_org-1', publicDid: undefined })
+      const wallet = entityStub<Wallet>({ id: 'User_user-1', publicDid: undefined })
       vi.mocked(em.findOneOrFail).mockResolvedValue(wallet)
-      vi.mocked(didRegistrarService.createDid).mockResolvedValue(didDocumentStub({ id: 'did:key:member' }))
+      vi.mocked(didRegistrarService.createDid).mockResolvedValue(didDocumentStub({ id: 'did:key:user' }))
 
-      await service.create(makeAuthInfo(Role.OrgMember, 'Member_user-1_in_Organization_org-1', 'org-1'), {})
+      await service.create(makeAuthInfo(Role.User, 'User_user-1'), {})
 
       expect(em.findOne).not.toHaveBeenCalled()
-      expect(wallet.publicDid).toBe('did:key:member')
+      expect(wallet.publicDid).toBe('did:key:user')
     })
   })
 })

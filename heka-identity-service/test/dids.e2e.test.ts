@@ -61,34 +61,32 @@ describe('E2E public DIDs creation', () => {
     expect((await postDid(secondAdminToken, 'indy')).status).toBe(201)
   })
 
-  test('roles without the did capability cannot create a public DID', async () => {
+  test('roles other than Admin, OrgAdmin and Issuer cannot create a public DID', async () => {
     const orgId = uuid()
     for (const token of [
       await createAuthToken(uuid(), Role.OrgManager, orgId),
       await createAuthToken(uuid(), Role.OrgMember, orgId),
+      await createAuthToken(uuid(), Role.Verifier, orgId),
       await createAuthToken(uuid(), Role.User),
     ]) {
       expect((await postDid(token)).status).toBe(403)
     }
   })
 
-  test('the DID controller chain Admin -> OrgAdmin -> Issuer / Verifier is a prerequisite', async () => {
+  test('the DID controller chain Admin -> OrgAdmin -> Issuer is a prerequisite', async () => {
     const orgId = uuid()
     const adminToken = await createAuthToken(uuid(), Role.Admin)
     const orgAdminToken = await createAuthToken(uuid(), Role.OrgAdmin, orgId)
     const issuerToken = await createAuthToken(uuid(), Role.Issuer, orgId)
-    const verifierToken = await createAuthToken(uuid(), Role.Verifier, orgId)
 
     expect((await postDid(orgAdminToken)).status).toBe(422)
     expect((await postDid(issuerToken)).status).toBe(422)
-    expect((await postDid(verifierToken)).status).toBe(422)
 
     expect((await postDid(adminToken)).status).toBe(201)
     expect((await postDid(issuerToken)).status).toBe(422)
 
     expect((await postDid(orgAdminToken)).status).toBe(201)
     expect((await postDid(issuerToken)).status).toBe(201)
-    expect((await postDid(verifierToken)).status).toBe(201)
   })
 
   async function testDidCreation(testCase: { method: string; expected: string }) {
