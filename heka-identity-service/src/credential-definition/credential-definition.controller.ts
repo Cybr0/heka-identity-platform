@@ -15,8 +15,8 @@ import {
 } from '@nestjs/swagger'
 
 import { ReqTenantAgent, TenantAgent, TenantAgentInterceptor } from 'common/agent'
-import { JwtAuthGuard } from 'common/auth'
-import { Capability, RequireCapability, RoleGuard } from 'common/authz'
+import { JwtAuthGuard, Role } from 'common/auth'
+import { RoleGuard, Roles } from 'common/authz'
 import { InjectLogger, Logger } from 'common/logger'
 
 import { CredentialDefinitionService } from './credential-definition.service'
@@ -41,7 +41,6 @@ export class CredentialDefinitionController {
   @ApiOkResponse({ description: 'Credential Definition Records', type: [CredentialDefinitionDto] })
   @ApiBadRequestResponse({ description: 'Bad Request' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  @RequireCapability(Capability.Read)
   @Get()
   public async find(
     @ReqTenantAgent() tenantAgent: TenantAgent,
@@ -63,8 +62,8 @@ export class CredentialDefinitionController {
   @ApiBadRequestResponse({ description: 'Bad Request' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiUnprocessableEntityResponse({ description: 'Unprocessable Entity' })
-  @RequireCapability(Capability.Issue)
   @Post()
+  @Roles(Role.Admin, Role.OrgAdmin, Role.OrgManager, Role.Issuer)
   public async create(
     @ReqTenantAgent() tenantAgent: TenantAgent,
     @Body() req: CreateCredentialDefinitionDto,
@@ -84,7 +83,6 @@ export class CredentialDefinitionController {
   @ApiBadRequestResponse({ description: 'Bad Request' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiNotFoundResponse({ description: 'Not Found' })
-  @RequireCapability(Capability.Read)
   @Get(':id')
   public async get(
     @ReqTenantAgent() tenantAgent: TenantAgent,

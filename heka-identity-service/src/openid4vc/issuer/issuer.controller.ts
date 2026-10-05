@@ -11,8 +11,8 @@ import {
 } from '@nestjs/swagger'
 
 import { ReqTenantAgent, TenantAgent, TenantAgentInterceptor } from 'common/agent'
-import { JwtAuthGuard } from 'common/auth'
-import { Capability, RequireCapability, RoleGuard } from 'common/authz'
+import { JwtAuthGuard, Role } from 'common/auth'
+import { RoleGuard, Roles } from 'common/authz'
 import { InjectLogger, Logger } from 'common/logger'
 
 import {
@@ -42,7 +42,6 @@ export class OpenId4VcIssuerController {
   @ApiOperation({ summary: 'Get issuer records' })
   @ApiOkResponse({ description: 'Issuer records', isArray: true, type: OpenId4VcIssuerRecordDto })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  @RequireCapability(Capability.Read)
   @Get()
   public async find(
     @ReqTenantAgent() tenantAgent: TenantAgent,
@@ -66,9 +65,9 @@ export class OpenId4VcIssuerController {
   @ApiBadRequestResponse({ description: 'Bad Request' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiUnprocessableEntityResponse({ description: 'Unprocessable Entity' })
-  @RequireCapability(Capability.Issue)
   @Post()
   @HttpCode(200)
+  @Roles(Role.Admin, Role.OrgAdmin, Role.OrgManager, Role.Issuer)
   public async create(
     @ReqTenantAgent() tenantAgent: TenantAgent,
     @Body() req: OpenId4VcIssuersCreateDto,
@@ -95,7 +94,7 @@ export class OpenId4VcIssuerController {
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiUnprocessableEntityResponse({ description: 'Unprocessable Entity' })
   @HttpCode(200)
-  @RequireCapability(Capability.Issue)
+  @Roles(Role.Admin, Role.OrgAdmin, Role.OrgManager, Role.Issuer)
   @Put(':issuerId')
   public async update(
     @ReqTenantAgent() tenantAgent: TenantAgent,
@@ -118,7 +117,6 @@ export class OpenId4VcIssuerController {
     type: OpenId4VciCredentialConfigurationSupportedWithId,
   })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  @RequireCapability(Capability.Read)
   @Get('/supported-credentials')
   public async supportedCredentials(
     @ReqTenantAgent() tenantAgent: TenantAgent,

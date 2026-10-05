@@ -25,8 +25,8 @@ import {
 } from '@nestjs/swagger'
 
 import { ReqTenantAgent, TenantAgent, TenantAgentInterceptor } from '../../common/agent'
-import { JwtAuthGuard } from '../../common/auth'
-import { Capability, RequireCapability, RoleGuard } from '../../common/authz'
+import { JwtAuthGuard, Role } from '../../common/auth'
+import { RoleGuard, Roles } from '../../common/authz'
 import { InjectLogger, Logger } from '../../common/logger'
 
 import {
@@ -64,9 +64,9 @@ export class OpenId4VcVerificationSessionController {
   @ApiBadRequestResponse({ description: 'Bad Request' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiUnprocessableEntityResponse({ description: 'Unprocessable Entity' })
-  @RequireCapability(Capability.Verify)
   @Post('request')
   @HttpCode(HttpStatus.OK)
+  @Roles(Role.Admin, Role.OrgAdmin, Role.OrgManager, Role.Verifier)
   public async createRequest(
     @ReqTenantAgent() tenantAgent: TenantAgent,
     @Body() req: OpenId4VcVerificationSessionCreateRequestDto,
@@ -91,7 +91,6 @@ export class OpenId4VcVerificationSessionController {
   })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiNotFoundResponse({ description: 'Not Found' })
-  @RequireCapability(Capability.Read)
   @Get('/')
   public async getVerificationSessionsByQuery(
     @ReqTenantAgent() tenantAgent: TenantAgent,
@@ -114,7 +113,6 @@ export class OpenId4VcVerificationSessionController {
   @ApiOkResponse({ description: 'Verification session record', type: OpenId4VcVerificationSessionRecordDto })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiNotFoundResponse({ description: 'Not Found' })
-  @RequireCapability(Capability.Read)
   @Get(':verificationSessionId')
   public async getVerificationSession(
     @ReqTenantAgent() tenantAgent: TenantAgent,
@@ -139,9 +137,9 @@ export class OpenId4VcVerificationSessionController {
   @ApiBadRequestResponse({ description: 'Bad Request' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiUnprocessableEntityResponse({ description: 'Unprocessable Entity' })
-  @RequireCapability(Capability.Verify)
   @Post(':verificationSessionId/verify')
   @HttpCode(HttpStatus.OK)
+  @Roles(Role.Admin, Role.OrgAdmin, Role.OrgManager, Role.Verifier)
   public async verifyDcApiResponse(
     @ReqTenantAgent() tenantAgent: TenantAgent,
     @Param('verificationSessionId') verificationSessionId: string,
@@ -171,7 +169,7 @@ export class OpenId4VcVerificationSessionController {
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiUnprocessableEntityResponse({ description: 'Unprocessable Entity' })
   @HttpCode(HttpStatus.NO_CONTENT)
-  @RequireCapability(Capability.Verify)
+  @Roles(Role.Admin, Role.OrgAdmin, Role.OrgManager, Role.Verifier)
   @Delete(':verificationSessionId')
   public async deleteVerificationSession(
     @ReqTenantAgent() tenantAgent: TenantAgent,

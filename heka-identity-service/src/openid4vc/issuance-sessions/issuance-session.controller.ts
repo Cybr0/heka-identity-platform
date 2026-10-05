@@ -13,8 +13,8 @@ import {
 } from '@nestjs/swagger'
 
 import { ReqTenantAgent, TenantAgent, TenantAgentInterceptor } from 'common/agent'
-import { AuthInfo, JwtAuthGuard, ReqAuthInfo } from 'common/auth'
-import { Capability, RequireCapability, RoleGuard } from 'common/authz'
+import { AuthInfo, JwtAuthGuard, ReqAuthInfo, Role } from 'common/auth'
+import { RoleGuard, Roles } from 'common/authz'
 import { InjectLogger, Logger } from 'common/logger'
 
 import {
@@ -48,9 +48,9 @@ export class OpenId4VcIssuanceSessionController {
   @ApiBadRequestResponse({ description: 'Bad Request' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiUnprocessableEntityResponse({ description: 'Unprocessable Entity' })
-  @RequireCapability(Capability.Issue)
   @Post('offer')
   @HttpCode(200)
+  @Roles(Role.Admin, Role.OrgAdmin, Role.OrgManager, Role.Issuer)
   public async offer(
     @ReqAuthInfo() authInfo: AuthInfo,
     @ReqTenantAgent() tenantAgent: TenantAgent,
@@ -72,7 +72,6 @@ export class OpenId4VcIssuanceSessionController {
   @ApiOkResponse({ description: 'Credential Record', type: OpenId4VcIssuanceSessionRecordDto })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiNotFoundResponse({ description: 'Not Found' })
-  @RequireCapability(Capability.Read)
   @Get('/')
   public async getIssuanceSessionsByQuery(
     @ReqTenantAgent() tenantAgent: TenantAgent,
@@ -95,7 +94,6 @@ export class OpenId4VcIssuanceSessionController {
   @ApiOkResponse({ description: 'Credential Record', type: OpenId4VcIssuanceSessionRecordDto })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiNotFoundResponse({ description: 'Not Found' })
-  @RequireCapability(Capability.Read)
   @Get(':issuanceSessionId')
   public async getIssuanceSession(
     @ReqTenantAgent() tenantAgent: TenantAgent,
@@ -120,7 +118,7 @@ export class OpenId4VcIssuanceSessionController {
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiUnprocessableEntityResponse({ description: 'Unprocessable Entity' })
   @HttpCode(204)
-  @RequireCapability(Capability.Issue)
+  @Roles(Role.Admin, Role.OrgAdmin, Role.OrgManager, Role.Issuer)
   @Delete(':issuanceSessionId')
   public async deleteIssuanceSession(
     @ReqTenantAgent() tenantAgent: TenantAgent,
@@ -136,9 +134,9 @@ export class OpenId4VcIssuanceSessionController {
 
   @ApiOperation({ summary: 'Revoke a credential' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  @RequireCapability(Capability.Issue)
   @Post(':id/revoke')
   @HttpCode(200)
+  @Roles(Role.Admin, Role.OrgAdmin, Role.OrgManager, Role.Issuer)
   public async revoke(
     @ReqAuthInfo() authInfo: AuthInfo,
     @ReqTenantAgent() tenantAgent: TenantAgent,

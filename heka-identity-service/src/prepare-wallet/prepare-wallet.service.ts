@@ -3,7 +3,6 @@ import { Injectable } from '@nestjs/common'
 
 import { TenantAgent } from 'common/agent'
 import { AuthInfo } from 'common/auth'
-import { AuthorizationService, Capability } from 'common/authz'
 import { Wallet } from 'common/entities'
 import { InjectLogger, Logger } from 'common/logger'
 import { credentialFormatToCredentialRegistrationFormat, DidMethod, MAIN_DID_METHOD } from 'common/types'
@@ -23,7 +22,6 @@ export class PrepareWalletService {
     @InjectLogger(PrepareWalletService)
     private readonly logger: Logger,
     private readonly em: EntityManager,
-    private readonly authorizationService: AuthorizationService,
     private readonly didService: DidService,
     private readonly openId4VcIssuerService: OpenId4VcIssuerService,
     private readonly openId4VcVerifierService: OpenId4VcVerifierService,
@@ -40,11 +38,6 @@ export class PrepareWalletService {
   ): Promise<PrepareWalletResponseDto> {
     const logger = this.logger.child('prepareWallet', { req })
     logger.trace('>')
-
-    // Creating and registering schemas is an `issue` operation, so it is authorized before anything is created
-    if (req.schemas?.length) {
-      this.authorizationService.assert(authInfo, Capability.Issue)
-    }
 
     const wallet = await this.em.findOneOrFail(Wallet, { id: authInfo.walletId })
     let mainDid: string | undefined = wallet.publicDid
@@ -68,7 +61,7 @@ export class PrepareWalletService {
             mainDid = did
           }
         } catch (error) {
-          // The main DID is required, so the reason it failed (e.g. 403 or 422) is returned as is
+          // The main DID is required, so the reason it failed (e.g. 409 or 422) is returned as is
           if (method === PrepareWalletService.mainDidMethod) {
             throw error
           }
@@ -76,17 +69,12 @@ export class PrepareWalletService {
           continue
         }
 
-        // OID4VC records are `issue` / `verify` operations, created only for capabilities the actor holds
         try {
-          if (this.authorizationService.can(authInfo.role, Capability.Issue)) {
-            await this.openId4VcIssuerService.createIssuer(tenantAgent, {
-              publicIssuerId: did,
-              credentialsSupported: [],
-            })
-          }
-          if (this.authorizationService.can(authInfo.role, Capability.Verify)) {
-            await this.openId4VcVerifierService.createVerifier(tenantAgent, { publicVerifierId: did })
-          }
+          await this.openId4VcIssuerService.createIssuer(tenantAgent, {
+            publicIssuerId: did,
+            credentialsSupported: [],
+          })
+          await this.openId4VcVerifierService.createVerifier(tenantAgent, { publicVerifierId: did })
         } catch (error) {
           this.logger.error(`Failed to initialize OID4VC records for DID ${did}`)
         }

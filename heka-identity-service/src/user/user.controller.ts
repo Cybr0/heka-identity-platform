@@ -13,7 +13,6 @@ import {
 
 import { ReqTenantAgent, TenantAgent, TenantAgentInterceptor } from 'common/agent'
 import { AuthInfo, JwtAuthGuard, ReqAuthInfo } from 'common/auth'
-import { Capability, RequireCapability, RoleGuard } from 'common/authz'
 import { InjectLogger, Logger } from 'common/logger'
 
 import { imageMulterOptions } from '../common/file-uploader/image.multer.options'
@@ -26,7 +25,7 @@ import { UserService } from './user.service'
 @ApiBearerAuth()
 @ApiUnauthorizedResponse({ description: 'Unauthorized.' })
 @ApiBadRequestResponse({ description: 'Bad Request.' })
-@UseGuards(JwtAuthGuard, RoleGuard)
+@UseGuards(JwtAuthGuard)
 @Controller('user')
 @UseInterceptors(TenantAgentInterceptor)
 export class UserController {
@@ -40,7 +39,6 @@ export class UserController {
 
   @ApiOperation({ summary: 'Get logged user data' })
   @ApiOkResponse({ description: 'Logged user data.', type: UserDto })
-  @RequireCapability(Capability.Read)
   @Get()
   public async getMe(@ReqAuthInfo() authInfo: AuthInfo): Promise<UserDto> {
     const logger = this.logger.child('getMe', { authInfo })
@@ -57,7 +55,6 @@ export class UserController {
   @ApiBody({ description: 'User data', type: PatchUserDto })
   @ApiOkResponse({ description: 'User data modified.', type: UserDto })
   @ApiConsumes('multipart/form-data')
-  @RequireCapability(Capability.Profile)
   @Patch()
   @UseInterceptors(FileInterceptor('logo', imageMulterOptions))
   public async patchMe(

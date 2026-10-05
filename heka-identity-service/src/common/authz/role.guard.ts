@@ -1,11 +1,10 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 
-import { AuthInfo } from 'common/auth'
+import { AuthInfo, Role } from 'common/auth'
 
 import { AuthorizationService } from './authorization.service'
-import { Capability } from './capability'
-import { CAPABILITY_KEY } from './capability.decorator'
+import { ROLES_KEY } from './roles.decorator'
 
 @Injectable()
 export class RoleGuard implements CanActivate {
@@ -15,23 +14,23 @@ export class RoleGuard implements CanActivate {
   ) {}
 
   public canActivate(context: ExecutionContext): boolean {
+    // With the role model disabled every authenticated user may call every endpoint
     if (!this.authorizationService.isEnforced) {
       return true
     }
 
-    const capability = this.reflector.getAllAndOverride<Capability | undefined>(CAPABILITY_KEY, [
+    const requiredRoles = this.reflector.getAllAndOverride<Role[] | undefined>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),
     ])
 
-    // Every guarded endpoint must declare a capability; a missing one is denied rather than allowed
-    if (!capability) {
-      return false
+    if (!requiredRoles) {
+      return true
     }
 
     const request = context.switchToHttp().getRequest()
-    const authInfo = request.user as AuthInfo
+    const user = request.user as AuthInfo
 
-    return this.authorizationService.can(authInfo.role, capability)
+    return requiredRoles.includes(user.role)
   }
 }

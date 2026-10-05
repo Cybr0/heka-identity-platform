@@ -78,49 +78,44 @@ describe('E2E role model', () => {
     })
   })
 
-  describe('enabled: endpoint capabilities', () => {
+  describe('enabled: endpoint role restrictions', () => {
     beforeEach(() => startApp(true))
 
+    // The `@Roles` lists are the same as before the role model became optional
     test.each([
-      ['read', 'get', '/dids?own=true', Role.User, true],
-      ['profile', 'patch', '/user', Role.OrgMember, true],
-      ['hold', 'post', '/connections/accept-invitation', Role.OrgMember, true],
-      ['connect', 'post', '/connections/create-invitation', Role.OrgMember, false],
-      ['connect', 'post', '/connections/create-invitation', Role.Verifier, true],
-      ['did', 'post', '/dids', Role.OrgManager, false],
-      ['did', 'post', '/dids', Role.Admin, true],
-      ['prepare', 'post', '/prepare-wallet', Role.OrgMember, false],
-      ['prepare', 'post', '/prepare-wallet', Role.User, false],
-      ['issue', 'post', '/v2/schemas', Role.Verifier, false],
-      ['issue', 'post', '/v2/schemas', Role.Issuer, true],
-      ['issue', 'post', '/v2/credentials/offer-by-template', Role.OrgMember, false],
-      ['verify', 'post', '/verification-templates', Role.Issuer, false],
-      ['verify', 'post', '/v2/credentials/proof-by-template', Role.OrgMember, false],
-      ['verify', 'post', '/proofs/request', Role.Verifier, true],
-    ])(
-      '%s: %s %s as %s is allowed=%s',
-      async (_capability: string, method: string, path: string, role: Role, allowed: boolean) => {
-        const token = await tokenFor(role)
+      ['get', '/dids?own=true', Role.User, true],
+      ['patch', '/user', Role.OrgMember, true],
+      ['post', '/connections/accept-invitation', Role.User, true],
+      ['post', '/connections/accept-invitation', Role.OrgMember, false],
+      ['post', '/connections/create-invitation', Role.User, false],
+      ['post', '/connections/create-invitation', Role.Verifier, true],
+      ['post', '/dids', Role.OrgManager, false],
+      ['post', '/dids', Role.Verifier, false],
+      ['post', '/dids', Role.Admin, true],
+      ['post', '/credentials/offer', Role.Verifier, false],
+      ['post', '/proofs/request', Role.Issuer, true],
+      ['post', '/proofs/request', Role.User, false],
+      ['post', '/openid4vc/verifier', Role.Issuer, false],
+    ])('%s %s as %s is allowed=%s', async (method: string, path: string, role: Role, allowed: boolean) => {
+      const token = await tokenFor(role)
 
-        const response = await (request(app) as unknown as Record<string, (p: string) => request.Test>)
-          [method](path)
-          .auth(token, { type: 'bearer' })
-          .send({})
+      const response = await (request(app) as unknown as Record<string, (p: string) => request.Test>)
+        [method](path)
+        .auth(token, { type: 'bearer' })
+        .send({})
 
-        if (allowed) {
-          expect(response.status).not.toBe(403)
-        } else {
-          expect(response.status).toBe(403)
-        }
-      },
-    )
+      if (allowed) {
+        expect(response.status).not.toBe(403)
+      } else {
+        expect(response.status).toBe(403)
+      }
+    })
 
-    test('a fresh sign-up (OrgMember) can read but cannot prepare a wallet or create a DID', async () => {
-      const token = await tokenFor(Role.OrgMember)
+    test('a role that cannot create a public DID cannot prepare a wallet', async () => {
+      const token = await tokenFor(Role.User)
 
       expect((await request(app).get('/dids').query({ own: true }).auth(token, { type: 'bearer' })).status).toBe(200)
       expect((await post('/prepare-wallet', token)).status).toBe(403)
-      expect((await post('/dids', token)).status).toBe(403)
     })
   })
 
@@ -132,22 +127,9 @@ describe('E2E role model', () => {
       expect((await post('/prepare-wallet', await tokenFor(Role.OrgAdmin, uuid(), orgId))).status).toBe(201)
     }
 
-    // OID4VC issuer / verifier records created for the wallet's main DID
-    const recordCounts = async (token: string, did: string) => {
-      const issuers = await request(app)
-        .get('/openid4vc/issuer')
-        .query({ publicIssuerId: did })
-        .auth(token, { type: 'bearer' })
-      const verifiers = await request(app)
-        .get('/openid4vc/verifier')
-        .query({ publicVerifierId: did })
-        .auth(token, { type: 'bearer' })
-      return { issuers: (issuers.body as unknown[]).length, verifiers: (verifiers.body as unknown[]).length }
-    }
-
     beforeEach(() => startApp(true))
 
-    test('an Issuer gets 422 until the organization is prepared, then issuer records only', async () => {
+    test('an Issuer gets 422 until the organization is prepared', async () => {
       const token = await tokenFor(Role.Issuer, uuid(), orgId)
       expect((await post('/prepare-wallet', token)).status).toBe(422)
 
@@ -155,26 +137,7 @@ describe('E2E role model', () => {
 
       const prepareResponse = await post('/prepare-wallet', token)
       expect(prepareResponse.status).toBe(201)
-      const counts = await recordCounts(token, prepareResponse.body.did)
-      expect(counts.issuers).toBeGreaterThan(0)
-      expect(counts.verifiers).toBe(0)
-    })
-
-    test('a Verifier gets verifier records only, and 403 when it requests schemas', async () => {
-      await bootstrapOrganization()
-      const token = await tokenFor(Role.Verifier, uuid(), orgId)
-
-      const withSchemas = await request(app)
-        .post('/prepare-wallet')
-        .auth(token, { type: 'bearer' })
-        .send({ schemas: [{ name: 'Diploma', fields: ['name'] }] })
-      expect(withSchemas.status).toBe(403)
-
-      const prepareResponse = await post('/prepare-wallet', token)
-      expect(prepareResponse.status).toBe(201)
-      const counts = await recordCounts(token, prepareResponse.body.did)
-      expect(counts.issuers).toBe(0)
-      expect(counts.verifiers).toBeGreaterThan(0)
+      expect(prepareResponse.body.did).toMatch(/^did:key:/)
     })
 
     test('an OrgManager gets 403 until an OrgAdmin has prepared the organization wallet, then its DID', async () => {

@@ -196,15 +196,18 @@ describe('DidService', () => {
       expect(wallet.publicDid).toBe('did:key:root')
     })
 
-    test('1. rejects a role without the did capability before anything else', async () => {
+    test('rejects a role that cannot create a public DID when the role model is enabled', async () => {
+      vi.mocked(em.findOneOrFail).mockResolvedValue(
+        entityStub<Wallet>({ id: 'Organization_org-1', publicDid: undefined }),
+      )
+
       await expect(didService.create(makeAuthInfo(Role.OrgManager, 'Organization_org-1', 'org-1'), {})).rejects.toThrow(
         ForbiddenException,
       )
-      expect(em.findOneOrFail).not.toHaveBeenCalled()
       expect(didRegistrarService.createDid).not.toHaveBeenCalled()
     })
 
-    test('2. returns 409 when the wallet already has its main-method DID, before the controller check', async () => {
+    test('returns 409 when the wallet already has its main-method DID, before the controller check', async () => {
       vi.mocked(em.findOneOrFail).mockResolvedValue(
         entityStub<Wallet>({ id: 'Member_user-1_in_Organization_org-1', publicDid: 'did:key:existing' }),
       )
@@ -219,7 +222,7 @@ describe('DidService', () => {
       [Role.OrgAdmin, 'Organization_org-1', 'Administration'],
       [Role.Issuer, 'Member_user-1_in_Organization_org-1', 'Organization_org-1'],
       [Role.Verifier, 'Member_user-1_in_Organization_org-1', 'Organization_org-1'],
-    ])('3. %s gets 422 until its controller %s has a public DID', async (role, walletId, controllerId) => {
+    ])('%s gets 422 until its controller %s has a public DID', async (role, walletId, controllerId) => {
       vi.mocked(em.findOneOrFail).mockResolvedValue(entityStub<Wallet>({ id: walletId, publicDid: undefined }))
       vi.mocked(em.findOne).mockResolvedValue(entityStub<Wallet>({ id: controllerId, publicDid: undefined }))
 
@@ -230,7 +233,7 @@ describe('DidService', () => {
       expect(didRegistrarService.createDid).not.toHaveBeenCalled()
     })
 
-    test('3. once the controller has a public DID, the DID is created in the caller tenant', async () => {
+    test('once the controller has a public DID, the DID is created in the caller tenant', async () => {
       vi.mocked(em.findOneOrFail).mockResolvedValue(
         entityStub<Wallet>({ id: 'Member_user-1_in_Organization_org-1', publicDid: undefined }),
       )
@@ -246,7 +249,7 @@ describe('DidService', () => {
       expect(didRegistrarService.createDid).toHaveBeenCalledWith('tenant-1', 'indy', { namespace: 'test-ns' })
     })
 
-    test('4. an unsupported method is rejected by the registrar after the authorization checks', async () => {
+    test('an unsupported method is rejected by the registrar', async () => {
       vi.mocked(em.findOneOrFail).mockResolvedValue(entityStub<Wallet>({ id: 'Administration', publicDid: undefined }))
       vi.mocked(didRegistrarService.createDid).mockRejectedValue(
         new BadRequestException("DID Method 'foo' is not supported"),
@@ -325,7 +328,7 @@ describe('DidService', () => {
       expect(maxPending).toBe(2)
     })
 
-    test('simplified mode skips the capability and controller checks', async () => {
+    test('with the role model disabled the controller check is skipped', async () => {
       const service = makeService(false)
       const wallet = entityStub<Wallet>({ id: 'Member_user-1_in_Organization_org-1', publicDid: undefined })
       vi.mocked(em.findOneOrFail).mockResolvedValue(wallet)

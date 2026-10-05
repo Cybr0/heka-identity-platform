@@ -13,7 +13,7 @@ import { Mutex } from 'async-mutex'
 
 import { Agent, AGENT_TOKEN, TenantAgent } from 'common/agent'
 import { AuthInfo } from 'common/auth'
-import { AuthorizationService, Capability } from 'common/authz'
+import { AuthorizationService } from 'common/authz'
 import { DidRegistrarService } from 'common/did-registrar'
 import { Wallet } from 'common/entities'
 import { InjectLogger, Logger } from 'common/logger'
@@ -74,20 +74,17 @@ export class DidService {
     const logger = this.logger.child('create')
     logger.trace('>')
 
-    // 1. Only roles with the `did` capability may create a public DID
-    this.authorizationService.assert(authInfo, Capability.Did)
-
     const method = req.method ?? MAIN_DID_METHOD
 
     const run = async () => {
-      // 2. `Wallet.publicDid` is the main-method DID, so only that method is limited to one per wallet.
+      // 1. `Wallet.publicDid` is the main-method DID, so only that method is limited to one per wallet.
       // The wallet is re-read so a main DID persisted by a concurrent request is observed
       const wallet = await this.em.findOneOrFail(Wallet, { id: authInfo.walletId }, { refresh: true })
       if (method === MAIN_DID_METHOD && wallet.publicDid) {
         throw new ConflictException(`The wallet already contains created public DID: ${wallet.publicDid}`)
       }
 
-      // 3. The controller's public DID must exist first. It only orders the hierarchy: the DID is
+      // 2. The controller's public DID must exist first. It only orders the hierarchy: the DID is
       // always created in the caller's own wallet
       if (this.authorizationService.isEnforced) {
         const didControllerWalletId = getDidControllerWalletId({ role: authInfo.role, orgId: authInfo.orgId })
@@ -103,7 +100,7 @@ export class DidService {
         }
       }
 
-      // 4. Unsupported methods are rejected by the registrar
+      // 3. Unsupported methods are rejected by the registrar
       const didDocument = await this.didRegistrarService.createDid(authInfo.tenantId, method, {
         namespace: this.agent.agencyConfig.networks[0].indyNamespace,
       })

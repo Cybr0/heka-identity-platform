@@ -1,10 +1,8 @@
 import { createMock } from '@golevelup/ts-vitest'
 import { EntityManager } from '@mikro-orm/core'
-import { ForbiddenException } from '@nestjs/common'
 
 import { TenantAgent } from 'common/agent'
 import { AuthInfo, Role } from 'common/auth'
-import { AuthorizationService } from 'common/authz'
 import { Wallet } from 'common/entities'
 import { Logger } from 'common/logger'
 import { DidService } from 'did/did.service'
@@ -36,17 +34,8 @@ describe('PrepareWalletService', () => {
     tenantId: 'tenant-1',
   }
 
-  const makeService = (enabled: boolean) =>
-    new PrepareWalletService(
-      logger,
-      em,
-      new AuthorizationService({ enabled }),
-      didService,
-      issuerService,
-      verifierService,
-      schemaV2Service,
-      userService,
-    )
+  const makeService = () =>
+    new PrepareWalletService(logger, em, didService, issuerService, verifierService, schemaV2Service, userService)
 
   beforeEach(() => {
     logger = createMock<Logger>()
@@ -58,7 +47,7 @@ describe('PrepareWalletService', () => {
     wallet = { id: 'Administration', publicDid: undefined } as Wallet
     em = createMock<EntityManager>()
     vi.mocked(em.findOneOrFail).mockResolvedValue(wallet)
-    prepareWalletService = makeService(true)
+    prepareWalletService = makeService()
     tenantAgent = createMock<TenantAgent>()
   })
 
@@ -304,57 +293,5 @@ describe('PrepareWalletService', () => {
       'schema-1',
       expect.objectContaining({ network: 'key', did: 'did:key:z1' }),
     )
-  })
-
-  describe('nested operations are authorized by their own capability (role model enabled)', () => {
-    const memberAuthInfo = (role: Role): AuthInfo => ({
-      ...authInfo,
-      role,
-      orgId: 'org-1',
-      walletId: 'Member_user-1_in_Organization_org-1',
-    })
-
-    beforeEach(() => {
-      vi.mocked(didService.getMethods).mockReturnValue({ methods: ['key'] })
-      vi.mocked(didService.create).mockResolvedValue({ id: 'did:key:z1' } as any)
-    })
-
-    test('an Issuer gets issuer records only', async () => {
-      await prepareWalletService.prepareWallet(memberAuthInfo(Role.Issuer), tenantAgent, {})
-
-      expect(issuerService.createIssuer).toHaveBeenCalledTimes(1)
-      expect(verifierService.createVerifier).not.toHaveBeenCalled()
-    })
-
-    test('a Verifier gets verifier records only', async () => {
-      await prepareWalletService.prepareWallet(memberAuthInfo(Role.Verifier), tenantAgent, {})
-
-      expect(issuerService.createIssuer).not.toHaveBeenCalled()
-      expect(verifierService.createVerifier).toHaveBeenCalledTimes(1)
-    })
-
-    test('a Verifier requesting schemas gets 403 before anything is created', async () => {
-      await expect(
-        prepareWalletService.prepareWallet(memberAuthInfo(Role.Verifier), tenantAgent, {
-          schemas: [{ name: 'TestSchema', fields: [{ name: 'field1' }] } as any],
-        }),
-      ).rejects.toThrow(ForbiddenException)
-
-      expect(em.findOneOrFail).not.toHaveBeenCalled()
-      expect(didService.create).not.toHaveBeenCalled()
-      expect(schemaV2Service.create).not.toHaveBeenCalled()
-    })
-
-    test('with the role model disabled a Verifier gets both records and may request schemas', async () => {
-      vi.mocked(schemaV2Service.create).mockResolvedValue({ id: 'schema-1' } as any)
-
-      await makeService(false).prepareWallet(memberAuthInfo(Role.Verifier), tenantAgent, {
-        schemas: [{ name: 'TestSchema', fields: [{ name: 'field1' }] } as any],
-      })
-
-      expect(issuerService.createIssuer).toHaveBeenCalledTimes(1)
-      expect(verifierService.createVerifier).toHaveBeenCalledTimes(1)
-      expect(schemaV2Service.create).toHaveBeenCalledTimes(1)
-    })
   })
 })

@@ -94,7 +94,7 @@ describe('E2E authorization', () => {
     expect(createConnectionInvitationResponse.status).toBe(403)
   })
 
-  test('authorizes any role to read (`read` capability)', async () => {
+  test('authorizes user if required roles are not set for method', async () => {
     const userAuthToken = await signJwt(
       {
         name: 'John',
@@ -115,7 +115,7 @@ describe('E2E authorization', () => {
     expect(getDidsResponse.status).toBe(200)
   })
 
-  test('authorizes any role to read its profile (`read` capability)', async () => {
+  test('authorizes user if RoleGuard is not used for controller', async () => {
     const userAuthToken = await signJwt(
       {
         name: 'John',

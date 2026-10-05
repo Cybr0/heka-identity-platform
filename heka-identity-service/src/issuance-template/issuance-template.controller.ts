@@ -13,7 +13,7 @@ import {
 
 import { TenantAgentInterceptor } from 'common/agent'
 import { AuthInfo, JwtAuthGuard, ReqAuthInfo } from 'common/auth'
-import { Capability, RequireCapability, RoleGuard } from 'common/authz'
+import { RoleGuard } from 'common/authz'
 import { InjectLogger, Logger } from 'common/logger'
 
 import { ApiListResponse } from '../common/dto'
@@ -48,7 +48,6 @@ export class IssuanceTemplateController {
 
   @ApiOperation({ summary: 'Get templates list' })
   @ApiListResponse({ listItemType: GetIssuanceTemplatesListItem, description: 'List of templates' })
-  @RequireCapability(Capability.Read)
   @Get()
   public async getTemplatesList(
     @ReqAuthInfo() authInfo: AuthInfo,
@@ -64,7 +63,6 @@ export class IssuanceTemplateController {
   @ApiOperation({ summary: 'Get template details' })
   @ApiParam({ name: 'id', format: 'uuid', type: 'string', description: 'Template id' })
   @ApiResponse({ type: GetIssuanceTemplateResponse, description: 'Template details' })
-  @RequireCapability(Capability.Read)
   @Get(':id')
   public async getTemplateById(
     @Param('id') id: string,
@@ -80,7 +78,6 @@ export class IssuanceTemplateController {
   @ApiOperation({ summary: 'Create template' })
   @ApiBody({ type: CreateIssuanceTemplateRequest })
   @ApiResponse({ type: CreateIssuanceTemplateResponse })
-  @RequireCapability(Capability.Issue)
   @Post('')
   public async createTemplate(
     @ReqAuthInfo() authInfo: AuthInfo,
@@ -98,7 +95,6 @@ export class IssuanceTemplateController {
   @ApiBody({ type: PatchIssuanceTemplateRequest })
   @ApiResponse({ type: PatchIssuanceTemplateResponse })
   @ApiOkResponse()
-  @RequireCapability(Capability.Issue)
   @Patch(':id')
   public async patchTemplate(
     @ReqAuthInfo() authInfo: AuthInfo,
@@ -115,7 +111,6 @@ export class IssuanceTemplateController {
   @ApiOperation({ summary: 'Delete template' })
   @ApiParam({ name: 'id', format: 'uuid', type: 'string', description: 'Template id' })
   @ApiOkResponse()
-  @RequireCapability(Capability.Issue)
   @Delete(':id')
   public async deleteTemplate(@ReqAuthInfo() authInfo: AuthInfo, @Param('id') id: string): Promise<void> {
     const logger = this.logger.child('deleteTemplate', { authInfo })
