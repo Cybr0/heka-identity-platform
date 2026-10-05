@@ -143,15 +143,16 @@ describe('E2E role model', () => {
 
     beforeEach(() => startApp(true))
 
-    test('an Issuer gets 422 until the organization is prepared', async () => {
+    test('an Issuer prepares its wallet before the organization; only DIDs that need a controller wait', async () => {
       const token = await tokenFor(Role.Issuer, uuid(), orgId)
-      expect((await post('/prepare-wallet', token)).status).toBe(422)
 
-      await bootstrapOrganization()
-
+      // The main did:key has no controller, so preparation does not depend on the organization
       const prepareResponse = await post('/prepare-wallet', token)
       expect(prepareResponse.status).toBe(201)
       expect(prepareResponse.body.did).toMatch(/^did:key:/)
+
+      // A did:hedera is controlled by the organization's did:hedera, which does not exist yet
+      expect((await post('/dids', token, { method: 'hedera' })).status).toBe(422)
     })
 
     test('an OrgManager gets 403 until an OrgAdmin has prepared the organization wallet, then its DID', async () => {

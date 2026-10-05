@@ -39,6 +39,11 @@ export function getWalletId({ role, userId, orgId }: { role: Role; userId: strin
   }
 }
 
+/**
+ * The wallet whose DID controls the public DIDs this role creates (with the role model enabled): `Administration`
+ * controls organization DIDs, an organization controls its issuers' DIDs, and Admin DIDs are self-controlled.
+ * Roles that cannot create a public DID are rejected.
+ */
 export function getDidControllerWalletId({ role, orgId }: { role: Role; orgId?: string }): string | null {
   switch (role) {
     case Role.Admin:

@@ -19,6 +19,7 @@ import { Wallet } from 'common/entities'
 import { InjectLogger, Logger } from 'common/logger'
 import { MAIN_DID_METHOD } from 'common/types'
 import { getDidControllerWalletId } from 'utils/auth'
+import { withTenantAgent } from 'utils/multi-tenancy'
 
 import AgentConfig from '../config/agent'
 
@@ -84,25 +85,27 @@ export class DidService {
         throw new ConflictException(`The wallet already contains created public DID: ${wallet.publicDid}`)
       }
 
-      // 2. The controller's public DID must exist first. It only orders the hierarchy: the DID is
-      // always created in the caller's own wallet
+      // 2. With the role model enabled, the new DID is controlled by the DID of the same method held by the
+      // controller wallet (Admin -> OrgAdmin -> Issuer), for methods that support a controller. Roles that cannot
+      // create a public DID are rejected here as well
+      let controller: string | undefined
       if (this.authorizationService.isEnforced) {
         const didControllerWalletId = getDidControllerWalletId({ role: authInfo.role, orgId: authInfo.orgId })
-        logger.info(`DID controller wallet ID: ${didControllerWalletId ?? 'N/A'}`)
-
-        if (didControllerWalletId) {
-          const didControllerWallet = await this.em.findOne(Wallet, { id: didControllerWalletId })
-          if (!didControllerWallet?.publicDid) {
+        if (didControllerWalletId && this.didRegistrarService.supportsController(method)) {
+          controller = await this.findCreatedDid(didControllerWalletId, method)
+          if (!controller) {
             throw new UnprocessableEntityException(
-              `Public DID created by ${didControllerWalletId} is required in order to be set as controller but it has not been created yet`,
+              `A ${method} DID created by ${didControllerWalletId} is required in order to be set as controller but it has not been created yet`,
             )
           }
+          logger.info(`DID controller: ${controller}`)
         }
       }
 
       // 3. Unsupported methods are rejected by the registrar
       const didDocument = await this.didRegistrarService.createDid(authInfo.tenantId, method, {
         namespace: this.agent.agencyConfig.networks[0].indyNamespace,
+        controller,
       })
 
       if (method === MAIN_DID_METHOD) {
@@ -120,6 +123,17 @@ export class DidService {
     logger.trace('<')
     return res
     /* jscpd:ignore-end */
+  }
+
+  private async findCreatedDid(walletId: string, method: string): Promise<string | undefined> {
+    const wallet = await this.em.findOne(Wallet, { id: walletId })
+    if (!wallet) {
+      return undefined
+    }
+    const didRecords = await withTenantAgent({ agent: this.agent, tenantId: wallet.tenantId }, (tenantAgent) =>
+      tenantAgent.dids.getCreatedDids({ method }),
+    )
+    return didRecords[0]?.did
   }
 
   public async get(tenantAgent: TenantAgent, did: string): Promise<DidDocumentDto> {

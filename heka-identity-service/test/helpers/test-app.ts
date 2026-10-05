@@ -11,7 +11,7 @@ import {
   JwkDidRegistrar,
 } from '@credo-ts/core'
 import { DidCommMessagePickupModule } from '@credo-ts/didcomm'
-import { HederaAnonCredsRegistry, HederaDidRegistrar, HederaDidResolver, HederaModule } from '@credo-ts/hedera'
+import { HederaAnonCredsRegistry, HederaDidRegistrar, HederaDidResolver } from '@credo-ts/hedera'
 import {
   IndyVdrAnonCredsRegistry,
   IndyVdrIndyDidRegistrar,
@@ -33,6 +33,7 @@ import { TailsService } from 'revocation/revocation-registry/tails.service'
 import { AppModule } from 'src/app.module'
 import { startApp } from 'src/app.starter'
 import { AGENT_MODULES_TOKEN, getAgencyModulesMap } from 'src/common/agent/agent-modules.provider'
+import { HekaHederaModule } from 'src/common/agent/hedera'
 import AgentConfig from 'src/config/agent'
 import FileStorageConfig from 'src/config/file-storage'
 import MikroOrmConfig from 'src/config/mikro-orm'
@@ -140,7 +141,7 @@ export async function startTestApp(options: TestAppOptions = {}): Promise<INestA
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             app: agencyConfig.oidConfig.app as any,
           }),
-          hedera: new HederaModule({
+          hedera: new HekaHederaModule({
             networks: [
               {
                 network: AgentConfig().hederaNetwork,

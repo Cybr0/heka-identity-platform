@@ -73,20 +73,50 @@ describe('E2E public DIDs creation', () => {
     }
   })
 
-  test('the DID controller chain Admin -> OrgAdmin -> Issuer is a prerequisite', async () => {
+  test('a did:key cannot have another controller, so it does not wait for the controller wallet', async () => {
+    const orgAdminToken = await createAuthToken(uuid(), Role.OrgAdmin, uuid())
+
+    expect((await postDid(orgAdminToken)).status).toBe(201)
+  })
+
+  test('a did:hedera is controlled by the hedera DID of its controller wallet (Admin -> OrgAdmin -> Issuer)', async () => {
     const orgId = uuid()
     const adminToken = await createAuthToken(uuid(), Role.Admin)
     const orgAdminToken = await createAuthToken(uuid(), Role.OrgAdmin, orgId)
     const issuerToken = await createAuthToken(uuid(), Role.Issuer, orgId)
 
-    expect((await postDid(orgAdminToken)).status).toBe(422)
-    expect((await postDid(issuerToken)).status).toBe(422)
+    const resolveController = async (token: string, did: string) => {
+      const response = await request(app).get(`/dids/${did}`).auth(token, { type: 'bearer' })
+      expect(response.status).toBe(200)
+      return response.body.controller as string | string[] | undefined
+    }
 
-    expect((await postDid(adminToken)).status).toBe(201)
-    expect((await postDid(issuerToken)).status).toBe(422)
+    // The controller must have a DID of the same method first
+    expect((await postDid(orgAdminToken, 'hedera')).status).toBe(422)
+    expect((await postDid(issuerToken, 'hedera')).status).toBe(422)
 
-    expect((await postDid(orgAdminToken)).status).toBe(201)
-    expect((await postDid(issuerToken)).status).toBe(201)
+    const adminResponse = await postDid(adminToken, 'hedera')
+    expect(adminResponse.status).toBe(201)
+    const adminDid = adminResponse.body.id as string
+    expect((await postDid(issuerToken, 'hedera')).status).toBe(422)
+
+    const orgAdminResponse = await postDid(orgAdminToken, 'hedera')
+    expect(orgAdminResponse.status).toBe(201)
+    const orgAdminDid = orgAdminResponse.body.id as string
+    expect(orgAdminResponse.body.controller).toEqual(adminDid)
+    // The controller is recorded on the ledger, not only in the local DID record
+    expect(await resolveController(issuerToken, orgAdminDid)).toEqual(adminDid)
+    // The organization still signs with its own DID: it registers an AnonCreds schema on the ledger
+    const schemaResponse = await request(app)
+      .post('/schemas')
+      .auth(orgAdminToken, { type: 'bearer' })
+      .send({ issuerId: orgAdminDid, name: 'Diploma', version: '1.0', attrNames: ['name'] })
+    expect(schemaResponse.status).toBe(201)
+
+    const issuerResponse = await postDid(issuerToken, 'hedera')
+    expect(issuerResponse.status).toBe(201)
+    expect(issuerResponse.body.controller).toEqual(orgAdminDid)
+    expect(await resolveController(issuerToken, issuerResponse.body.id as string)).toEqual(orgAdminDid)
   })
 
   async function testDidCreation(testCase: { method: string; expected: string }) {
