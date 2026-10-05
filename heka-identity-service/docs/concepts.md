@@ -25,43 +25,44 @@ The Identity Service is multi-tenant. A single deployment hosts many independent
 
 ### Role model
 
-The role model is optional and controlled by [`ROLE_MODEL_ENABLED`](setup.md#role-model). Roles, organizations and wallets are the same in both modes; the flag only decides whether role capabilities are enforced. Existing deployments must follow [Upgrading an existing deployment](setup.md#upgrading-an-existing-deployment).
+The role model is optional and controlled by [`ROLE_MODEL_ENABLED`](setup.md#role-model). Roles and wallets are the same in both modes; the flag only decides whether role restrictions are enforced. Existing deployments must follow [Upgrading an existing deployment](setup.md#upgrading-an-existing-deployment).
 
-| Role                  | Scope        | Wallet (identity it acts as)                                          | Can create a public DID                   |
-| --------------------- | ------------ | --------------------------------------------------------------------- | ----------------------------------------- |
-| `Admin`               | Global       | `Administration`: the platform identity, shared by all `Admin`s       | Yes                                       |
-| `User`                | Global       | `User_<sub>`: a personal holder wallet                                | No                                        |
-| `OrgAdmin`            | Organization | `Organization_<org_id>`: the organization identity                    | Yes, once `Administration` has one        |
-| `OrgManager`          | Organization | `Organization_<org_id>`                                               | No                                        |
-| `OrgMember`           | Organization | `Member_<sub>_in_Organization_<org_id>`: the member's personal wallet | No                                        |
-| `Issuer` / `Verifier` | Organization | `Member_<sub>_in_Organization_<org_id>`                               | Yes, once `Organization_<org_id>` has one |
+| Role         | Scope        | Wallet                                                          | Can create a public DID (role model enabled) |
+| ------------ | ------------ | --------------------------------------------------------------- | -------------------------------------------- |
+| `Admin`      | Global       | `Administration`: the platform identity, shared by all `Admin`s | Yes                                          |
+| `User`       | Global       | `User_<sub>`: a personal wallet                                 | No                                           |
+| `OrgAdmin`   | Organization | `Organization_<org_id>`: the organization identity              | Yes                                          |
+| `OrgManager` | Organization | `Organization_<org_id>`                                         | No                                           |
+| `OrgMember`  | Organization | `Organization_<org_id>`                                         | No                                           |
+| `Issuer`     | Organization | `Issuer_<sub>_in_Organization_<org_id>`                         | Yes                                          |
+| `Verifier`   | Organization | `Verifier_<sub>_in_Organization_<org_id>`                       | No                                           |
 
 - **Organization roles require `org_id`, and `Admin` / `User` reject it** (`401`).
-- **`OrgMember`, `Issuer` and `Verifier` share one member wallet,** so a role change within a membership keeps its DIDs, credentials, schemas and templates.
-- **Platform organization.** The bundled Auth Service registers every sign-up as an `OrgMember` of the platform organization, its `ORG_ID`.
-- **Role model disabled (default):** every user has every capability over the wallet they act in, and the DID controller prerequisite is not applied. This is the self-service Web UI mode.
-- **Role model enabled:** each endpoint requires a capability:
+- **Roles come from the token issuer.** The bundled Auth Service registers every sign-up as a `User`; other roles are assigned through its [role assignment API](../../heka-auth-service/README.md#api). A role change gives the user a different wallet: the data of the previous wallet stays with it.
+- **Role model disabled (default):** roles aren't checked. Every user can call every endpoint in the wallet they act in, and no DID controller is set. This is the self-service Web UI mode.
+- **Role model enabled:** each endpoint allows only the roles listed in its `@Roles` decorator. Endpoints without one are open to every authenticated user. A role that can't create a public DID gets `403` from `POST /dids`, and from `POST /prepare-wallet` unless its wallet is already prepared.
 
-| Capability | Roles                                                   | Covers                                                                                  |
-| ---------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `read`     | all                                                     | every `GET`                                                                             |
-| `profile`  | all                                                     | `PATCH /user`                                                                           |
-| `hold`     | all                                                     | accept invitations and credentials, present proofs                                      |
-| `connect`  | `Admin`, `OrgAdmin`, `OrgManager`, `Issuer`, `Verifier` | create invitations                                                                      |
-| `did`      | `Admin`, `OrgAdmin`, `Issuer`, `Verifier`               | create public DIDs                                                                      |
-| `prepare`  | `Admin`, `OrgAdmin`, `OrgManager`, `Issuer`, `Verifier` | `POST /prepare-wallet`                                                                  |
-| `issue`    | `Admin`, `OrgAdmin`, `OrgManager`, `Issuer`             | schemas, credential definitions, revocation, offers, OID4VC issuers, issuance templates |
-| `verify`   | `Admin`, `OrgAdmin`, `OrgManager`, `Verifier`           | proof requests, OID4VP, OID4VC verifiers, verification templates                        |
+#### DID controller
 
-Operations that belong to another capability are checked where they run. For example, `POST /prepare-wallet` creates an OID4VC issuer record only with `issue` and a verifier record only with `verify`, and it accepts schemas only with `issue`.
+With the role model enabled, a public DID created by an `OrgAdmin` is controlled by a DID of `Administration`, and a DID created by an `Issuer` by a DID of its organization. The controller DID has the same method and is set as the `controller` of the new DID's document ([W3C DID](https://www.w3.org/TR/did-1.1/#did-controller)). `Admin` DIDs are their own controllers. The DID is always created in the caller's own wallet, which holds its keys.
 
-- **DID controller prerequisite** (enabled mode): an `OrgAdmin` can create a public DID only after `Administration` has one, and an `Issuer` / `Verifier` only after `Organization_<org_id>` has one (otherwise `422`). The DID is always created in the caller's own wallet.
-- **Ownership.** Schemas, templates and credential status lists belong to the wallet, not to the user who created them. Everyone who acts in a shared identity wallet sees the same resources.
-- **Issuer display.** The display (name, logo, colour) is written only by a role that administers the wallet: every role except `OrgManager`.
+| Method     | Controller                                                                                                         |
+| ---------- | ------------------------------------------------------------------------------------------------------------------ |
+| `hedera`   | Set on the ledger when the DID is created. Until the controller wallet has a `hedera` DID, creation fails (`422`). |
+| `key`      | Not possible: a `did:key` document is derived from the key, so it is always its own controller.                    |
+| `indy`     | Not supported: Credo's Indy registrar always makes the DID its own controller.                                     |
+| `indybesu` | Not supported yet: whether the ledger accepts another controller hasn't been verified.                             |
+
+DIDs of the methods without a controller are created without one. `POST /prepare-wallet` creates the DIDs of all configured methods and skips a DID whose controller doesn't exist yet.
+
+#### Ownership
+
+- **Schemas belong to the wallet,** so everyone acting in a shared wallet (for example, the members of an organization) sees the same schemas, with the same visibility and order. The user who created a schema is shown as its issuer (`issuerId`, `issuerName`).
+- **Templates and credential status lists belong to the user** who created them.
 
 ### Quick tenant setup for use (optional)
 
-The `POST /prepare-wallet` endpoint bootstraps a tenant for Web UI use. It creates one public DID per configured method (the `key` DID becomes the wallet's primary DID), OID4VC issuer / verifier records for the capabilities the caller holds, and the issuer display. It also registers requested schemas if needed. Once the wallet has a primary DID, it is prepared. See `src/prepare-wallet/`.
+The `POST /prepare-wallet` endpoint bootstraps a tenant for Web UI use. It creates one public DID per configured method (the `key` DID becomes the wallet's primary DID), OID4VC issuer and verifier records for each DID, and the issuer display. It also registers requested schemas if needed. Once the wallet has a primary DID, it is prepared; a concurrent call for the same wallet returns that DID. See `src/prepare-wallet/`.
 
 ## Core Abstractions
 
