@@ -110,6 +110,36 @@ describe('E2E role assignment', () => {
     expect((await request(app).get('/api/v1/users')).status).toBe(401)
   })
 
+  test('two Admins demoting each other at the same time leave one of them Admin', async () => {
+    const root = await login(ADMIN)
+
+    // Several pairs at once make the requests of a pair overlap
+    const pairs = await Promise.all(
+      Array.from({ length: 8 }, async () => {
+        const users = [await register(), await register()]
+        const ids = await Promise.all(users.map(async (user) => (await findUserId(root.token, user.name))!))
+        for (const id of ids) {
+          expect((await setRole(root.token, id, UserRole.Admin)).status).toBe(200)
+        }
+        const tokens = await Promise.all(users.map(async (user) => (await login(user)).token))
+        return { ids, tokens }
+      }),
+    )
+
+    const responses = await Promise.all(
+      pairs.map(({ ids, tokens }) =>
+        Promise.all([setRole(tokens[0], ids[1], UserRole.User), setRole(tokens[1], ids[0], UserRole.User)]),
+      ),
+    )
+
+    const users = (await listUsers(root.token)).body.items as Array<{ id: string; role: string }>
+    pairs.forEach(({ ids }, index) => {
+      expect(responses[index].map((response) => response.status).sort()).toEqual([200, 403])
+      const roles = users.filter((user) => ids.includes(user.id)).map((user) => user.role)
+      expect(roles.sort()).toEqual([UserRole.Admin, UserRole.User])
+    })
+  })
+
   test('an Admin cannot change its own role, and invalid input is rejected', async () => {
     const admin = await login(ADMIN)
     const adminId = (await findUserId(admin.token, ADMIN.name))!

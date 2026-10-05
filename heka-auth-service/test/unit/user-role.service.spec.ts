@@ -1,6 +1,7 @@
+import { LockMode, QueryOrder } from '@mikro-orm/core'
 import { ForbiddenException, NotFoundException } from '@nestjs/common'
 
-import { type User, UserRole } from '../../src/core/database/entities/user.entity'
+import { User, UserRole } from '../../src/core/database/entities/user.entity'
 import type { UserRepository } from '../../src/core/database/repositories'
 import { ORGANIZATION_ROLES, UserRoleService } from '../../src/user/user-role.service'
 
@@ -15,12 +16,18 @@ describe('UserRoleService', () => {
   let service: UserRoleService
   let userRepository: {
     find: ReturnType<typeof vi.fn>
-    findOne: ReturnType<typeof vi.fn>
-    persistAndFlush: ReturnType<typeof vi.fn>
+    getEntityManager: ReturnType<typeof vi.fn>
   }
+  // Entity manager of the role update transaction
+  let em: { transactional: ReturnType<typeof vi.fn>; find: ReturnType<typeof vi.fn> }
+
+  // Rows returned by the locking query of the transaction
+  const lockedRows = (...users: User[]) => em.find.mockResolvedValue(users)
 
   beforeEach(() => {
-    userRepository = { find: vi.fn().mockResolvedValue([]), findOne: vi.fn(), persistAndFlush: vi.fn() }
+    em = { transactional: vi.fn(), find: vi.fn().mockResolvedValue([]) }
+    em.transactional.mockImplementation((callback: (transactionEm: typeof em) => Promise<unknown>) => callback(em))
+    userRepository = { find: vi.fn().mockResolvedValue([]), getEntityManager: vi.fn().mockReturnValue(em) }
     service = new UserRoleService(userRepository as unknown as UserRepository)
   })
 
@@ -61,20 +68,32 @@ describe('UserRoleService', () => {
   describe('updateRole', () => {
     it.each(Object.values(UserRole))('lets an Admin assign the %s role', async (role) => {
       const user = createUser('user-1', UserRole.User)
-      userRepository.findOne.mockResolvedValue(user)
+      lockedRows(admin, user)
 
       const result = await service.updateRole(admin, 'user-1', { role })
 
       expect(user.role).toBe(role)
-      expect(userRepository.persistAndFlush).toHaveBeenCalledWith(user)
+      expect(em.transactional).toHaveBeenCalledTimes(1)
       expect(result).toEqual({ id: 'user-1', name: user.name, role })
+    })
+
+    it('locks the sender and the target in a fixed order and re-reads them', async () => {
+      lockedRows(admin, createUser('user-1', UserRole.User))
+
+      await service.updateRole(admin, 'user-1', { role: UserRole.Issuer })
+
+      expect(em.find).toHaveBeenCalledWith(
+        User,
+        { id: { $in: ['admin-1', 'user-1'] } },
+        { lockMode: LockMode.PESSIMISTIC_WRITE, orderBy: { id: QueryOrder.ASC }, refresh: true },
+      )
     })
 
     it.each(ORGANIZATION_ROLES)(
       'lets an OrgAdmin assign the %s role to a user outside the organization',
       async (role) => {
         const user = createUser('user-1', UserRole.User)
-        userRepository.findOne.mockResolvedValue(user)
+        lockedRows(orgAdmin, user)
 
         await service.updateRole(orgAdmin, 'user-1', { role })
 
@@ -84,38 +103,58 @@ describe('UserRoleService', () => {
 
     it.each([UserRole.Admin, UserRole.User])('forbids an OrgAdmin to assign the %s role', async (role) => {
       const user = createUser('user-1', UserRole.Issuer)
-      userRepository.findOne.mockResolvedValue(user)
+      lockedRows(orgAdmin, user)
 
       await expect(service.updateRole(orgAdmin, 'user-1', { role })).rejects.toThrow(ForbiddenException)
       expect(user.role).toBe(UserRole.Issuer)
-      expect(userRepository.persistAndFlush).not.toHaveBeenCalled()
     })
 
     it('hides an Admin from an OrgAdmin', async () => {
-      userRepository.findOne.mockResolvedValue(createUser('admin-2', UserRole.Admin))
+      const otherAdmin = createUser('admin-2', UserRole.Admin)
+      lockedRows(otherAdmin, orgAdmin)
 
       await expect(service.updateRole(orgAdmin, 'admin-2', { role: UserRole.OrgMember })).rejects.toThrow(
         NotFoundException,
       )
-      expect(userRepository.persistAndFlush).not.toHaveBeenCalled()
+      expect(otherAdmin.role).toBe(UserRole.Admin)
     })
 
     it('returns 404 for an unknown user', async () => {
-      userRepository.findOne.mockResolvedValue(null)
+      lockedRows(admin)
 
       await expect(service.updateRole(admin, 'missing', { role: UserRole.Issuer })).rejects.toThrow(NotFoundException)
     })
 
+    it('forbids a sender whose role was changed in the meantime', async () => {
+      // The request was authenticated as an Admin, but another Admin demoted the sender before the rows were locked
+      const staleSender = createUser('admin-1', UserRole.Admin)
+      const otherAdmin = createUser('admin-2', UserRole.Admin)
+      lockedRows(createUser('admin-1', UserRole.User), otherAdmin)
+
+      await expect(service.updateRole(staleSender, 'admin-2', { role: UserRole.User })).rejects.toThrow(
+        ForbiddenException,
+      )
+      expect(otherAdmin.role).toBe(UserRole.Admin)
+    })
+
+    it('forbids a sender who no longer exists', async () => {
+      const user = createUser('user-1', UserRole.User)
+      lockedRows(user)
+
+      await expect(service.updateRole(admin, 'user-1', { role: UserRole.Issuer })).rejects.toThrow(ForbiddenException)
+      expect(user.role).toBe(UserRole.User)
+    })
+
     it.each([admin, orgAdmin])('forbids changing your own role ($role)', async (sender) => {
       await expect(service.updateRole(sender, sender.id, { role: UserRole.Issuer })).rejects.toThrow(ForbiddenException)
-      expect(userRepository.findOne).not.toHaveBeenCalled()
+      expect(em.transactional).not.toHaveBeenCalled()
     })
 
     it.each([UserRole.OrgManager, UserRole.Issuer, UserRole.User])('forbids a %s', async (role) => {
       await expect(service.updateRole(createUser('sender', role), 'user-1', { role: UserRole.Issuer })).rejects.toThrow(
         ForbiddenException,
       )
-      expect(userRepository.findOne).not.toHaveBeenCalled()
+      expect(em.transactional).not.toHaveBeenCalled()
     })
   })
 })
