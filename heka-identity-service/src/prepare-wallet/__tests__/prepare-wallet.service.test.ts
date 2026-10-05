@@ -1,5 +1,6 @@
 import { createMock } from '@golevelup/ts-vitest'
 import { EntityManager } from '@mikro-orm/core'
+import { ConflictException } from '@nestjs/common'
 
 import { TenantAgent } from 'common/agent'
 import { AuthInfo, Role } from 'common/auth'
@@ -95,6 +96,32 @@ describe('PrepareWalletService', () => {
 
     await expect(prepareWalletService.prepareWallet(authInfo, tenantAgent, {})).rejects.toBe(error)
     expect(didService.create).toHaveBeenCalledWith(authInfo, { method: 'key' })
+  })
+
+  test('treats a main DID created by a concurrent request as an already prepared wallet', async () => {
+    vi.mocked(didService.getMethods).mockReturnValue({ methods: ['key', 'indy'] })
+    vi.mocked(didService.create).mockImplementation(() => {
+      // The concurrent request has persisted its main DID by the time this one gets 409
+      wallet.publicDid = 'did:key:concurrent'
+      return Promise.reject(new ConflictException('The wallet already contains created public DID'))
+    })
+
+    const result = await prepareWalletService.prepareWallet(authInfo, tenantAgent, {})
+
+    expect(result.did).toBe('did:key:concurrent')
+    expect(em.findOneOrFail).toHaveBeenLastCalledWith(Wallet, { id: 'Administration' }, { refresh: true })
+    // The other DIDs, OID4VC records and the profile are left to the request that created the main DID
+    expect(didService.create).toHaveBeenCalledTimes(1)
+    expect(issuerService.createIssuer).not.toHaveBeenCalled()
+    expect(userService.patchMe).not.toHaveBeenCalled()
+  })
+
+  test('returns 409 as is when the wallet still has no main DID', async () => {
+    vi.mocked(didService.getMethods).mockReturnValue({ methods: ['key'] })
+    const error = new ConflictException('conflict')
+    vi.mocked(didService.create).mockRejectedValue(error)
+
+    await expect(prepareWalletService.prepareWallet(authInfo, tenantAgent, {})).rejects.toBe(error)
   })
 
   test('creates the main-method DID first regardless of the configured order', async () => {

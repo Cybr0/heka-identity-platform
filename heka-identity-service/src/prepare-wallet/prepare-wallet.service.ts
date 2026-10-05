@@ -1,5 +1,5 @@
 import { EntityManager } from '@mikro-orm/core'
-import { Injectable } from '@nestjs/common'
+import { ConflictException, Injectable } from '@nestjs/common'
 
 import { TenantAgent } from 'common/agent'
 import { AuthInfo } from 'common/auth'
@@ -51,6 +51,7 @@ export class PrepareWalletService {
         ...methods.filter((method) => method === PrepareWalletService.mainDidMethod),
         ...methods.filter((method) => method !== PrepareWalletService.mainDidMethod),
       ]
+      let preparedConcurrently = false
       for (const method of orderedMethods) {
         let did
 
@@ -61,8 +62,18 @@ export class PrepareWalletService {
             mainDid = did
           }
         } catch (error) {
-          // The main DID is required, so the reason it failed (e.g. 409 or 422) is returned as is
           if (method === PrepareWalletService.mainDidMethod) {
+            // A concurrent request created the main DID first and prepares the rest of the wallet itself
+            if (error instanceof ConflictException) {
+              const { publicDid } = await this.em.findOneOrFail(Wallet, { id: authInfo.walletId }, { refresh: true })
+              if (publicDid) {
+                logger.info(`Wallet ${authInfo.walletId} prepared by a concurrent request`)
+                mainDid = publicDid
+                preparedConcurrently = true
+                break
+              }
+            }
+            // The main DID is required, so the reason it failed (e.g. 422) is returned as is
             throw error
           }
           this.logger.error(`Failed to create DID for method ${method}`)
@@ -80,15 +91,17 @@ export class PrepareWalletService {
         }
       }
 
-      await this.userService.patchMe(
-        authInfo,
-        tenantAgent,
-        {
-          name: authInfo.userName,
-          backgroundColor: PrepareWalletService.defaultColor,
-        },
-        userLogo,
-      )
+      if (!preparedConcurrently) {
+        await this.userService.patchMe(
+          authInfo,
+          tenantAgent,
+          {
+            name: authInfo.userName,
+            backgroundColor: PrepareWalletService.defaultColor,
+          },
+          userLogo,
+        )
+      }
     }
 
     if (!mainDid) {

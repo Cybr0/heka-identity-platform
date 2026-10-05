@@ -78,6 +78,20 @@ describe('E2E role model', () => {
     })
   })
 
+  describe('concurrent wallet preparation', () => {
+    beforeEach(() => startApp(false))
+
+    test('concurrent prepare-wallet calls for one wallet all succeed with the same main DID', async () => {
+      // Every Admin acts in the shared Administration wallet
+      const tokens = await Promise.all([tokenFor(Role.Admin), tokenFor(Role.Admin), tokenFor(Role.Admin)])
+
+      const responses = await Promise.all(tokens.map((token) => post('/prepare-wallet', token)))
+
+      expect(responses.map((response) => response.status)).toEqual([201, 201, 201])
+      expect(new Set(responses.map((response) => response.body.did as string)).size).toBe(1)
+    })
+  })
+
   describe('enabled: endpoint role restrictions', () => {
     beforeEach(() => startApp(true))
 
