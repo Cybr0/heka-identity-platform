@@ -36,6 +36,42 @@ describe('HekaHederaLedgerService', () => {
     expect(superUpdate).not.toHaveBeenCalled()
   })
 
+  test.each([
+    ['an empty document', new DidDocument({ id: '' })],
+    ['a document with only a context', new DidDocument({ id: '', context: ['https://www.w3.org/ns/did/v1'] })],
+  ])('skips the update of a new DID with %s', async (_, didDocument) => {
+    const superUpdate = vi.spyOn(HederaLedgerService.prototype, 'updateDid')
+
+    const result = await service.updateDid(agentContext, { did, didDocumentOperation: 'setDidDocument', didDocument })
+
+    expect(result).toEqual({ did, didDocument: createdDidDocument })
+    expect(superUpdate).not.toHaveBeenCalled()
+  })
+
+  test('fails when the new DID cannot be resolved', async () => {
+    const superUpdate = vi.spyOn(HederaLedgerService.prototype, 'updateDid')
+    vi.mocked(service.resolveDid).mockResolvedValue({ didDocument: null } as any)
+
+    await expect(
+      service.updateDid(agentContext, {
+        did,
+        didDocumentOperation: 'setDidDocument',
+        didDocument: new DidDocument({ id: '', controller: ['did:hedera:testnet:controller'] }),
+      }),
+    ).rejects.toThrow(`DID ${did} not found`)
+    expect(superUpdate).not.toHaveBeenCalled()
+  })
+
+  test('applies a controller-only document for other operations', async () => {
+    const superUpdate = vi.spyOn(HederaLedgerService.prototype, 'updateDid').mockResolvedValue({} as any)
+    const didDocument = new DidDocument({ id: '', controller: ['did:hedera:testnet:controller'] })
+
+    await service.updateDid(agentContext, { did, didDocumentOperation: 'addToDidDocument', didDocument })
+
+    expect(superUpdate).toHaveBeenCalledTimes(1)
+    expect(service.resolveDid).not.toHaveBeenCalled()
+  })
+
   test('applies any other update as Credo does', async () => {
     const superUpdate = vi.spyOn(HederaLedgerService.prototype, 'updateDid').mockResolvedValue({} as any)
     const didDocument = new DidDocument({
