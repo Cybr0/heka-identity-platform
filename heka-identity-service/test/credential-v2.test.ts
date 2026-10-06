@@ -1,6 +1,11 @@
 import { Server } from 'net'
 
-import { DidCommCredentialState, DidCommProofState } from '@credo-ts/didcomm'
+import {
+  DidCommCredentialEventTypes,
+  DidCommCredentialState,
+  DidCommProofEventTypes,
+  DidCommProofState,
+} from '@credo-ts/didcomm'
 import { OpenId4VcIssuanceSessionState, OpenId4VcVerificationSessionState } from '@credo-ts/openid4vc'
 import { MikroORM } from '@mikro-orm/core'
 import { PostgreSqlDriver, SchemaGenerator } from '@mikro-orm/postgresql'
@@ -18,7 +23,6 @@ import {
 import { CreateIssuanceTemplateResponse } from 'issuance-template/dto'
 import { CreateSchemaResponse } from 'schema-v2/dto'
 import { RegisterSchemaRequest } from 'schema-v2/dto/register-schema'
-import { sleep } from 'src/utils/timers'
 import { CredentialV2Utilities } from 'test/helpers/credential-v2'
 import { DidUtilities } from 'test/helpers/did'
 import { IssuanceTemplateUtilities } from 'test/helpers/issuance-template'
@@ -207,7 +211,7 @@ describe('Credential V2 tests', () => {
 
       const did = await DidUtilities.create(app, issuerToken!, DidMethod.Indy)
 
-      const [issuerConnectionRecordId, _holderConnectionRecordId] = await connectUsers(
+      const [issuerConnectionRecordId, holderConnectionRecordId] = await connectUsers(
         app,
         {
           label: 'Issuer',
@@ -247,11 +251,23 @@ describe('Credential V2 tests', () => {
       expect(offer!.state).toEqual(DidCommCredentialState.OfferSent)
       expect(offer?.id).toBeDefined()
 
+      await holderWebSocket.expectJson(
+        (message) => {
+          expect(message).toEqual(
+            expect.objectContaining({
+              type: DidCommCredentialEventTypes.DidCommCredentialStateChanged,
+              state: DidCommCredentialState.OfferReceived,
+              details: expect.objectContaining({
+                connectionId: holderConnectionRecordId,
+              }),
+            }),
+          )
+        },
+        { timeout: 30_000 },
+      )
+
       await verifier.close().expectClosed()
       await holderWebSocket.close().expectClosed()
-      // TODO: Find a way to explicitly await the required condition
-      // Give AFJ event listeners some time to process pending events
-      await sleep(4000)
     })
 
     test('Test Aries issuance by template without connection - should fail', async () => {
@@ -359,7 +375,7 @@ describe('Credential V2 tests', () => {
 
       const did = await DidUtilities.create(app, verifierToken!, DidMethod.Indy)
 
-      const [verifierConnectionRecordId, _holderConnectionRecordId] = await connectUsers(
+      const [verifierConnectionRecordId, holderConnectionRecordId] = await connectUsers(
         app,
         {
           label: 'Verifier',
@@ -390,11 +406,23 @@ describe('Credential V2 tests', () => {
       expect(proof?.request).toBeUndefined()
       expect(proof?.state).toEqual(DidCommProofState.RequestSent)
 
+      await holderWebSocket.expectJson(
+        (message) => {
+          expect(message).toEqual(
+            expect.objectContaining({
+              type: DidCommProofEventTypes.ProofStateChanged,
+              state: DidCommProofState.RequestReceived,
+              details: expect.objectContaining({
+                connectionId: holderConnectionRecordId,
+              }),
+            }),
+          )
+        },
+        { timeout: 30_000 },
+      )
+
       await verifier.close().expectClosed()
       await holderWebSocket.close().expectClosed()
-      // TODO: Find a way to explicitly await the required condition
-      // Give AFJ event listeners some time to process pending events
-      await sleep(4000)
     })
 
     test('Test Aries verification by template without connection - should fail', async () => {

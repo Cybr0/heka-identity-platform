@@ -15,7 +15,6 @@ import {
   CreateInvitationResponseDto,
 } from 'src/connection/dto'
 import { uuid } from 'src/utils/misc'
-import { sleep } from 'src/utils/timers'
 
 import { initializeMikroOrm, signJwt, startTestApp, waitForNotificationSocket } from './helpers'
 
@@ -98,10 +97,6 @@ describe('E2E connection', () => {
   afterEach(async () => {
     await holderWebSocket.close().expectClosed()
     await issuerWebSocket.close().expectClosed()
-
-    // TODO: Find a way to explicitly await the required condition
-    // Give AFJ event listeners some time to process pending events
-    await sleep(2000)
 
     await nestApp.close()
   })

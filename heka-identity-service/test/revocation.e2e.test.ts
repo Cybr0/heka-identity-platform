@@ -12,7 +12,6 @@ import request, { WSChain } from 'superwstest'
 import { CreateCredentialDefinitionDto } from 'credential-definition/dto'
 import { CreateSchemaDto } from 'schema/dto'
 import { uuid } from 'utils/misc'
-import { sleep } from 'utils/timers'
 
 import { initializeMikroOrm, signJwt, startTestApp, waitForNotificationSocket } from './helpers'
 
@@ -236,10 +235,6 @@ describe.skip('Revocation E2E Tests', () => {
   afterEach(async () => {
     await adminWebSocket.close().expectClosed()
     await holderWebSocket.close().expectClosed()
-
-    // TODO: Find a way to explicitly await the required condition
-    // Give AFJ event listeners some time to process pending events
-    await sleep(2000)
 
     await nestApp.close()
   })
