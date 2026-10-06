@@ -14,7 +14,7 @@ import { CreateSchemaDto } from 'schema/dto'
 import { uuid } from 'utils/misc'
 import { sleep } from 'utils/timers'
 
-import { initializeMikroOrm, signJwt, startTestApp } from './helpers'
+import { initializeMikroOrm, signJwt, startTestApp, waitForNotificationSocket } from './helpers'
 
 describe.skip('Revocation E2E Tests', () => {
   let ormSchemaGenerator: SchemaGenerator
@@ -80,9 +80,7 @@ describe.skip('Revocation E2E Tests', () => {
       .expectUpgrade((upgradeResponse) => {}) // eslint-disable-line @typescript-eslint/no-empty-function
 
     await adminWebSocket
-    // TODO: Find a way to explicitly await the required condition
-    // Give NotificationGateway some time to register user and wallet
-    await sleep(200)
+    await waitForNotificationSocket(nestApp, adminAuthToken)
 
     holderAuthToken = await signJwt(
       {
@@ -105,9 +103,7 @@ describe.skip('Revocation E2E Tests', () => {
       .expectUpgrade((upgradeResponse) => {}) // eslint-disable-line @typescript-eslint/no-empty-function
 
     await holderWebSocket
-    // TODO: Find a way to explicitly await the required condition
-    // Give NotificationGateway some time to register user and wallet
-    await sleep(200)
+    await waitForNotificationSocket(nestApp, holderAuthToken)
 
     adminAuthToken = await signJwt(
       {

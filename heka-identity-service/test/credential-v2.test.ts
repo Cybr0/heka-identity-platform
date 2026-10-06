@@ -33,6 +33,7 @@ import {
   SchemaUtilities,
   startTestApp,
   UserUtilities,
+  waitForNotificationSocket,
 } from './helpers'
 
 describe('Credential V2 tests', () => {
@@ -194,9 +195,7 @@ describe('Credential V2 tests', () => {
         .expectUpgrade((upgradeResponse) => {}) // eslint-disable-line @typescript-eslint/no-empty-function
 
       await verifier
-      // TODO: Find a way to explicitly await the required condition
-      // Give NotificationGateway some time to register user and wallet
-      await sleep(200)
+      await waitForNotificationSocket(nestApp, issuerToken!)
 
       holderWebSocket = request(app)
         .ws('/notifications')
@@ -204,9 +203,7 @@ describe('Credential V2 tests', () => {
         .expectUpgrade((upgradeResponse) => {}) // eslint-disable-line @typescript-eslint/no-empty-function
 
       await holderWebSocket
-      // TODO: Find a way to explicitly await the required condition
-      // Give NotificationGateway some time to register user and wallet
-      await sleep(200)
+      await waitForNotificationSocket(nestApp, holderToken!)
 
       const did = await DidUtilities.create(app, issuerToken!, DidMethod.Indy)
 
@@ -349,9 +346,7 @@ describe('Credential V2 tests', () => {
         .expectUpgrade((upgradeResponse) => {}) // eslint-disable-line @typescript-eslint/no-empty-function
 
       await verifier
-      // TODO: Find a way to explicitly await the required condition
-      // Give NotificationGateway some time to register user and wallet
-      await sleep(200)
+      await waitForNotificationSocket(nestApp, verifierToken!)
 
       holderWebSocket = request(app)
         .ws('/notifications')
@@ -360,9 +355,7 @@ describe('Credential V2 tests', () => {
         .expectUpgrade((upgradeResponse) => {})
 
       await holderWebSocket
-      // TODO: Find a way to explicitly await the required condition
-      // Give NotificationGateway some time to register user and wallet
-      await sleep(200)
+      await waitForNotificationSocket(nestApp, holderToken!)
 
       const did = await DidUtilities.create(app, verifierToken!, DidMethod.Indy)
 
