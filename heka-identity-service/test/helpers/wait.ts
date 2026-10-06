@@ -16,19 +16,39 @@ export interface WaitUntilOptions {
 /**
  * Polls `condition` until it returns `true`, or throws once `timeout` has elapsed.
  * The condition is always checked once more after the last interval before failing.
- * Errors thrown by `condition` are propagated as is.
+ * An async check that is still pending when the time runs out (given at least `interval` ms)
+ * is abandoned, not cancelled, and the same timeout error is thrown.
+ * Errors thrown or rejected by `condition` are propagated as is.
  */
 export async function waitUntil(
   condition: () => boolean | Promise<boolean>,
   { timeout = 10_000, interval = 25, message }: WaitUntilOptions = {},
 ): Promise<void> {
   const deadline = Date.now() + timeout
+  const timeoutError = () => new Error(message ?? `Condition not met within ${timeout} ms`)
   for (;;) {
-    if (await condition()) return
-    if (Date.now() >= deadline) {
-      throw new Error(message ?? `Condition not met within ${timeout} ms`)
-    }
+    const result = condition()
+    const met =
+      result instanceof Promise
+        ? await withTimeout(result, Math.max(deadline - Date.now(), interval), timeoutError)
+        : result
+    if (met) return
+    if (Date.now() >= deadline) throw timeoutError()
     await sleep(interval)
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(onTimeout()), ms)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
   }
 }
 
