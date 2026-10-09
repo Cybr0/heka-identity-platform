@@ -23,7 +23,7 @@ Authentication service for the [Heka Identity Service](https://github.com/hiero-
    yarn install
    ```
 
-3. (Optional) Create a `.env` file in the repo root to override any defaults — see [Configuration](#configuration) for the available variables.
+3. (Optional) Adjust `env/.env` to override any defaults — see [Configuration](#configuration) for the available variables. The service reads `env/.env` (and `env/.env.<NODE_ENV>` when `NODE_ENV` is set), not a `.env` file in the repo root.
 
 4. Run database migrations:
 
@@ -49,7 +49,7 @@ The service exposes a REST API at port `3004` by default. Swagger UI is availabl
 
 ## Configuration
 
-The service is configured via environment variables. Values can be set in a `.env` file at the repo root. All variables are optional — defaults are compiled in (see the tables below).
+The service is configured via environment variables. Values can be set in `env/.env` (or `env/.env.<NODE_ENV>` when `NODE_ENV` is set). All variables are optional — defaults are compiled in (see the tables below).
 
 ### Application
 
