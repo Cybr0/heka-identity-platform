@@ -11,6 +11,8 @@ class AppDelegate: ExpoAppDelegate, UNUserNotificationCenterDelegate {
 
   var reactNativeDelegate: ExpoReactNativeFactoryDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
+  // Kept for SceneDelegate, which starts React Native once the window scene connects.
+  var launchOptions: [UIApplication.LaunchOptionsKey: Any]?
 
   override func application(
     _ application: UIApplication,
@@ -27,13 +29,9 @@ class AppDelegate: ExpoAppDelegate, UNUserNotificationCenterDelegate {
     reactNativeFactory = factory
     bindReactNativeFactory(factory)
 
-    window = UIWindow(frame: UIScreen.main.bounds)
-
-    factory.startReactNative(
-      withModuleName: "heka-wallet",
-      in: window,
-      launchOptions: launchOptions
-    )
+    // The window and React Native root view are created in SceneDelegate:
+    // apps built with newer iOS SDKs must adopt the UIScene life cycle.
+    self.launchOptions = launchOptions
 
     // Exclude .afj folder from backup
     excludeDotAFJFolderFromBackup()
@@ -48,11 +46,6 @@ class AppDelegate: ExpoAppDelegate, UNUserNotificationCenterDelegate {
   ) -> Bool {
     return super.application(app, open: url, options: options)
       || RCTLinkingManager.application(app, open: url, options: options)
-  }
-
-  override func applicationDidBecomeActive(_ application: UIApplication) {
-    super.applicationDidBecomeActive(application)
-    UIApplication.shared.applicationIconBadgeNumber = 0
   }
 
   override func application(
@@ -91,6 +84,47 @@ class AppDelegate: ExpoAppDelegate, UNUserNotificationCenterDelegate {
     } catch {
       NSLog("Error excluding folder %@ from backup: %@", folderName, error.localizedDescription)
     }
+  }
+}
+
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+  var window: UIWindow?
+
+  func scene(
+    _ scene: UIScene,
+    willConnectTo _: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions
+  ) {
+    guard
+      let windowScene = scene as? UIWindowScene,
+      let appDelegate = UIApplication.shared.delegate as? AppDelegate,
+      let factory = appDelegate.reactNativeFactory
+    else { return }
+
+    let window = UIWindow(windowScene: windowScene)
+    self.window = window
+    appDelegate.window = window
+
+    factory.startReactNative(
+      withModuleName: "heka-wallet",
+      in: window,
+      launchOptions: appDelegate.launchOptions
+    )
+
+    // URL that launched the app (e.g. openid-credential-offer://...)
+    if let url = connectionOptions.urlContexts.first?.url {
+      _ = RCTLinkingManager.application(UIApplication.shared, open: url, options: [:])
+    }
+  }
+
+  func scene(_: UIScene, openURLContexts urlContexts: Set<UIOpenURLContext>) {
+    for context in urlContexts {
+      _ = RCTLinkingManager.application(UIApplication.shared, open: context.url, options: [:])
+    }
+  }
+
+  func sceneDidBecomeActive(_: UIScene) {
+    UIApplication.shared.applicationIconBadgeNumber = 0
   }
 }
 
