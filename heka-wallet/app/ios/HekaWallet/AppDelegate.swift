@@ -105,16 +105,21 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     self.window = window
     appDelegate.window = window
 
+    // With the scene life cycle, the URL that launched the app (e.g.
+    // openid-credential-offer://...) arrives here instead of in launchOptions.
+    // Expose it as the launch URL so that `Linking.getInitialURL()` returns it
+    // once JS is ready; emitting a `url` event now would be lost, as no JS
+    // listener is registered yet.
+    var launchOptions = appDelegate.launchOptions ?? [:]
+    if let url = connectionOptions.urlContexts.first?.url {
+      launchOptions[.url] = url
+    }
+
     factory.startReactNative(
       withModuleName: "heka-wallet",
       in: window,
-      launchOptions: appDelegate.launchOptions
+      launchOptions: launchOptions
     )
-
-    // URL that launched the app (e.g. openid-credential-offer://...)
-    if let url = connectionOptions.urlContexts.first?.url {
-      _ = RCTLinkingManager.application(UIApplication.shared, open: url, options: [:])
-    }
   }
 
   func scene(_: UIScene, openURLContexts urlContexts: Set<UIOpenURLContext>) {
