@@ -17,6 +17,7 @@ The platform is composed of the following components:
 - **[Identity Service](./heka-identity-service)**: Backend service (built with NestJS) that primarily acts as a Verifiable Credentials Issuer and Verifier, while also supporting Holder capabilities for cloud (custodial) wallet scenarios.
 - **[Identity Service Web UI](./heka-identity-service-web-ui)**: Web UI application for Identity Service — allows managing schemas, credential templates, and issuance / verification flows.
 - **[Auth Service](./heka-auth-service)**: Authentication service used by the Identity Service for tenant and user authentication.
+- **[DIDComm Mediator](./mediator)**: Docker Compose setup for a self-hosted DIDComm mediator ([OWF DIDComm Mediator Credo](https://github.com/openwallet-foundation/didcomm-mediator-credo)) that relays DIDComm messages to Heka Wallet.
 
 The implementation is based on the **DSR SSI Toolkit** and leverages well-established open-source frameworks: **OWF Credo** and **OWF Bifold**.
 
@@ -25,6 +26,7 @@ The implementation is based on the **DSR SSI Toolkit** and leverages well-establ
 ```mermaid
 flowchart LR
     Wallet[Heka Wallet<br/>Holder]
+    Mediator[DIDComm Mediator]
     WebUI[Identity Service Web UI<br/>Issuer / Verifier Client]
     Auth[Auth Service]
     IS[Identity Service<br/>Issuer / Verifier Wallet]
@@ -34,6 +36,8 @@ flowchart LR
     WebUI -->|REST API + JWT| IS
     Auth -.->|issues JWTs trusted by| IS
     Wallet <-->|OID4VC / DIDComm| IS
+    Wallet -->|DIDComm message pickup| Mediator
+    IS -->|DIDComm messages to Wallet| Mediator
     IS -->|DIDs / AnonCreds Resources| Hedera
     Wallet -->|DIDs and AnonCreds Resources resolution| Hedera
 ```
