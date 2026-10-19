@@ -2,25 +2,29 @@ import { IncomingMessage } from 'http'
 
 import { createMock } from '@golevelup/ts-vitest'
 import { EntityManager } from '@mikro-orm/core'
-import { UnauthorizedException } from '@nestjs/common'
-import { JwtService } from '@nestjs/jwt'
+import { ForbiddenException, UnauthorizedException } from '@nestjs/common'
 
 import { Agent } from 'common/agent'
 import { Role } from 'common/auth'
 import { User, Wallet } from 'common/entities'
 import { Logger } from 'common/logger'
-import { getWalletId } from 'utils/auth'
+import { getDidControllerWalletId, getWalletId } from 'utils/auth'
 
 import { AuthService } from '../auth.service'
+import { TokenVerifier } from '../token-verifier.service'
 
 describe('getWalletId', () => {
   test.each([
-    [{ role: Role.Admin, userId: '11' }, 'Administration_11'],
+    // Every Admin acts as the platform identity
+    [{ role: Role.Admin, userId: '11' }, 'Administration'],
+    // OrgAdmin / OrgManager / OrgMember share the organization wallet
     [{ role: Role.OrgAdmin, userId: '12', orgId: '1' }, 'Organization_1'],
     [{ role: Role.OrgManager, userId: '13', orgId: '1' }, 'Organization_1'],
     [{ role: Role.OrgMember, userId: '14', orgId: '1' }, 'Organization_1'],
+    // Issuer / Verifier have a personal wallet per role and organization
     [{ role: Role.Issuer, userId: '15', orgId: '1' }, 'Issuer_15_in_Organization_1'],
-    [{ role: Role.Verifier, userId: '16', orgId: '2' }, 'Verifier_16_in_Organization_2'],
+    [{ role: Role.Issuer, userId: '15', orgId: '2' }, 'Issuer_15_in_Organization_2'],
+    [{ role: Role.Verifier, userId: '16', orgId: '1' }, 'Verifier_16_in_Organization_1'],
     [{ role: Role.User, userId: '17' }, 'User_17'],
   ])("for %o returns '%s'", (params: { role: Role; userId: string; orgId?: string }, expected: string) => {
     const actual = getWalletId(params)
@@ -40,10 +44,39 @@ describe('getWalletId', () => {
   })
 })
 
+describe('getDidControllerWalletId', () => {
+  test.each([
+    [{ role: Role.Admin }, null],
+    [{ role: Role.OrgAdmin, orgId: '1' }, 'Administration'],
+    [{ role: Role.Issuer, orgId: '1' }, 'Organization_1'],
+  ])('for %o returns %s', (params: { role: Role; orgId?: string }, expected: string | null) => {
+    expect(getDidControllerWalletId(params)).toBe(expected)
+  })
+
+  test.each([
+    { role: Role.OrgManager, orgId: '1' },
+    { role: Role.OrgMember, orgId: '1' },
+    { role: Role.Verifier, orgId: '1' },
+    { role: Role.User },
+  ])(
+    'for %o throws ForbiddenException because the role cannot create a public DID',
+    (params: { role: Role; orgId?: string }) => {
+      expect(() => getDidControllerWalletId(params)).toThrow(ForbiddenException)
+    },
+  )
+
+  test.each([{ role: Role.Admin, orgId: '1' }, { role: Role.OrgAdmin }, { role: Role.Issuer }])(
+    'for %o throws UnauthorizedException',
+    (params: { role: Role; orgId?: string }) => {
+      expect(() => getDidControllerWalletId(params)).toThrow(UnauthorizedException)
+    },
+  )
+})
+
 describe('AuthService', () => {
   let service: AuthService
   let agent: Agent
-  let jwtService: JwtService
+  let tokenVerifier: TokenVerifier
   let em: EntityManager
   let logger: Logger
 
@@ -77,30 +110,40 @@ describe('AuthService', () => {
         },
       },
     })
-    jwtService = createMock<JwtService>()
+    tokenVerifier = createMock<TokenVerifier>()
     em = createMock<EntityManager>()
     logger = createMock<Logger>()
-    service = new AuthService(agent, jwtService, em, logger)
+    service = new AuthService(agent, tokenVerifier, em, logger)
   })
 
   describe('validateRequestToken', () => {
     test('throws when Authorization header is missing', async () => {
       const request = { headers: {} } as IncomingMessage
 
+      await expect(service.validateRequestToken(request)).rejects.toThrow(UnauthorizedException)
       await expect(service.validateRequestToken(request)).rejects.toThrow('Authorization token is missing')
+      expect(tokenVerifier.verify).not.toHaveBeenCalled()
     })
 
     test('throws when scheme is not Bearer', async () => {
       const request = { headers: { authorization: 'Basic abc123' } } as IncomingMessage
 
       await expect(service.validateRequestToken(request)).rejects.toThrow('Authorization token is missing')
+      expect(tokenVerifier.verify).not.toHaveBeenCalled()
+    })
+
+    test('propagates verification failures', async () => {
+      const request = { headers: { authorization: 'Bearer bad-jwt' } } as IncomingMessage
+      vi.mocked(tokenVerifier.verify).mockRejectedValue(new UnauthorizedException('Invalid token: ERR_JWT_EXPIRED'))
+
+      await expect(service.validateRequestToken(request)).rejects.toThrow('Invalid token: ERR_JWT_EXPIRED')
     })
 
     test('verifies token and returns AuthInfo', async () => {
       const request = { headers: { authorization: 'Bearer my-jwt' } } as IncomingMessage
       const payload = { sub: '11', org_id: '7', name: 'test', roles: [Role.Issuer] }
 
-      vi.mocked(jwtService.verifyAsync).mockResolvedValue(payload)
+      vi.mocked(tokenVerifier.verify).mockResolvedValue(payload)
 
       const user = makeUser({ id: '11' })
       const wallet = makeWallet()
@@ -108,7 +151,7 @@ describe('AuthService', () => {
 
       const result = await service.validateRequestToken(request)
 
-      expect(jwtService.verifyAsync).toHaveBeenCalledWith('my-jwt')
+      expect(tokenVerifier.verify).toHaveBeenCalledWith('my-jwt')
       expect(em.findOne).toHaveBeenNthCalledWith(1, User, { id: '11' })
       expect(em.findOne).toHaveBeenNthCalledWith(2, Wallet, { id: 'Issuer_11_in_Organization_7' })
       expect(result.userId).toBe('11')
