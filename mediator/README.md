@@ -56,8 +56,11 @@ This setup runs a single mediator instance with Postgres used for agent storage 
 | `POSTGRES_PASSWORD`  | `mediator`                                | Postgres password. **Replace for non-trivial use.**                                                         |
 | `MEDIATOR_IMAGE_TAG` | `375518d`                                 | Mediator image tag. Upstream publishes commit-based tags only (`375518d` = `v0.0.2-alpha-20251223125919`). |
 
-> **Note.** Changing `ASKAR_STORE_ID` / `ASKAR_STORE_KEY` or removing the Postgres volume creates a new mediator identity and invitation.
+> **Note.** Changing `ASKAR_STORE_ID` or removing the Postgres volume creates a new mediator identity and invitation.
 > Wallets connected to the previous one will stop receiving messages and need to be reinstalled (or reset) with the new `MEDIATOR_URL`.
+>
+> `ASKAR_STORE_KEY` encrypts the existing store: if it is changed while the Postgres volume is kept, the mediator cannot open the store and fails to start.
+> Keep the original key; to start with a new key, remove the volume first (`docker compose down -v`), which also creates a new mediator identity.
 
 The upstream image supports more options (Redis cache, DynamoDB / dedicated Postgres message queue, multi-instance setup, push notifications).
 See the [upstream documentation](https://github.com/openwallet-foundation/didcomm-mediator-credo#configuration) for details.

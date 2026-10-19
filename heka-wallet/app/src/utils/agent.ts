@@ -64,6 +64,7 @@ const MEDIATOR_SETUP_RETRY_MIN_DELAY_MS = 5000
 const MEDIATOR_SETUP_RETRY_MAX_DELAY_MS = 5 * 60 * 1000
 
 const agentsWithMediatorSetupInProgress = new WeakSet<Agent>()
+const mediatorSetupAttemptsInProgress = new WeakMap<Agent, Promise<void>>()
 
 export const TRUSTED_X509_CERTIFICATES = [
   'MIIBwDCCAWWgAwIBAgIUSMdjaVc1KHI+3o6qJXhSC4sJh+cwCgYIKoZIzj0EAwIwNTEXMBUGA1UEAwwObURMIElzc3VlciBEZXYxDTALBgNVBAoMBEhla2ExCzAJBgNVBAYTAlVTMB4XDTI2MDMyNzIxNDA1NloXDTM2MDMyNDIxNDA1NlowNTEXMBUGA1UEAwwObURMIElzc3VlciBEZXYxDTALBgNVBAoMBEhla2ExCzAJBgNVBAYTAlVTMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1nIrm3O9VX8MdPrKWMhqqV0QMS4UtxKj6uUc8IdGE2fSsWyi7XQN3HoE1Ln9TDtOIHvSyW8Eyr98MlWGBBF/vqNTMFEwHQYDVR0OBBYEFNfkrHxd2nwtni96XrrYhaMgUFImMB8GA1UdIwQYMBaAFNfkrHxd2nwtni96XrrYhaMgUFImMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhAP0V5EW7j6Pb+lJktzdWrtEqhI3mYs9Fd+qh0p2kNXJPAiEAqK+q7Wk+t5e2yzvO3b6t3P5nIEnoQt3cvDsaUZY1dT0=',
@@ -343,8 +344,21 @@ export async function ensureExampleCredentialCreated(agent: Agent): Promise<void
  *
  * Note: We intentionally don't use 'mediatorInvitationUrl' option of Credo mediation recipient module,
  * as it blocks agent initialization until the mediator is connected (so wallet cannot be initialized offline).
+ *
+ * Concurrent calls for the same agent share a single setup attempt, so they don't create duplicate mediator connections.
  */
-export async function setupMediatorIfNeeded(agent: Agent, mediatorInvitationUrl: string): Promise<void> {
+export function setupMediatorIfNeeded(agent: Agent, mediatorInvitationUrl: string): Promise<void> {
+  const attemptInProgress = mediatorSetupAttemptsInProgress.get(agent)
+  if (attemptInProgress) return attemptInProgress
+
+  const attempt = connectToMediator(agent, mediatorInvitationUrl).finally(() =>
+    mediatorSetupAttemptsInProgress.delete(agent)
+  )
+  mediatorSetupAttemptsInProgress.set(agent, attempt)
+  return attempt
+}
+
+async function connectToMediator(agent: Agent, mediatorInvitationUrl: string): Promise<void> {
   const existingMediationRecord = await agent.didcomm.mediationRecipient.findDefaultMediator()
   if (existingMediationRecord) return
 
