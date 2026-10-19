@@ -236,13 +236,14 @@ Real deployments should set `NODE_ENV=production` explicitly: an unset `NODE_ENV
 
 ### HTTP server (Express)
 
-| Variable               | Default     | Description                                                 |
-| ---------------------- | ----------- | ----------------------------------------------------------- |
-| `EXPRESS_HOST`         | `localhost` | Host the server binds to.                                   |
-| `EXPRESS_PORT`         | `3000`      | Port for the REST API and Swagger UI.                       |
-| `EXPRESS_PREFIX`       | _(unset)_   | Optional global URL prefix (e.g. `/api`).                   |
-| `EXPRESS_ENABLE_CORS`  | `true`      | Enable CORS handling.                                       |
-| `EXPRESS_CORS_OPTIONS` | `{}`        | JSON-encoded options passed to the Express CORS middleware. |
+| Variable               | Default                                                           | Description                                                                                          |
+| ---------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `EXPRESS_HOST`         | `localhost`                                                       | Host the server binds to.                                                                            |
+| `EXPRESS_PORT`         | `3000`                                                            | Port for the REST API and Swagger UI.                                                                |
+| `EXPRESS_PREFIX`       | _(unset)_                                                         | Optional global URL prefix (e.g. `/api`).                                                            |
+| `APP_ENDPOINT`         | `http://${EXPRESS_HOST}:${EXPRESS_PORT}` (+ `/${EXPRESS_PREFIX}`) | Public REST API URL used in AnonCreds tails file and status list URLs. Must be reachable by wallets. |
+| `EXPRESS_ENABLE_CORS`  | `true`                                                            | Enable CORS handling.                                                                                |
+| `EXPRESS_CORS_OPTIONS` | `{}`                                                              | JSON-encoded options passed to the Express CORS middleware.                                          |
 
 ### Agent transports
 

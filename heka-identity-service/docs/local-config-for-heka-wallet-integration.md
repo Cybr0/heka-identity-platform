@@ -17,7 +17,7 @@ The PC running the Identity Service and the mobile wallet **MUST** be connected 
 
 - Use [ngrok](https://ngrok.com/) (with a free account) to enable access to your local Heka Identity Service instance from the Heka Wallet — it provides easy setup and usage.
 - However, since the Identity Service exposes multiple endpoints, you also need to configure a web server to expose a single port and forward messages to the Identity Service. It's strongly recommended to use [nginx](https://www.nginx.com/) with the configuration below.
-  - Note that the Heka Identity Service REST API endpoints (not based on Credo transports) are hosted on a separate port and are not actually needed for Heka Wallet integration, but they are included in the nginx config for completeness.
+  - The Heka Identity Service REST API (not based on Credo transports) is hosted on a separate port. Wallets only need two public routes from it: AnonCreds tails files (`/revocation/tails/`, required to prove non-revocation) and credential status lists (`/credentials/status/`). Their public base URL is `APP_ENDPOINT`.
   - The OID4VC router mounts its routes at the path of the public URL it is given (`AGENT_OID4VCI_ENDPOINT`), so requests under `/openId/oid4vci/` and `/openId/oid4vp/` must be forwarded **with** the `/openId` prefix. Only uploaded files (logos) are served from the root of port `3003`, which is what the prefix-stripping `/openId/` location is for.
   - Wallets also fetch issuer metadata from `/.well-known/openid-credential-issuer/openId/oid4vci/<issuerId>` (RFC 8414 style), so `/.well-known/` must be forwarded to the OID4VC port as well.
   - If you have a paid ngrok account, you can probably skip nginx and expose multiple ports out of the box.
@@ -40,7 +40,12 @@ http {
     server {
         listen 9000;
 
-        location /api/ {
+        # REST API endpoints fetched by wallets: AnonCreds tails files and credential status lists
+        location /revocation/tails/ {
+            proxy_pass http://localhost:{YOUR_IDENTITY_SERVICE_API_PORT};
+        }
+
+        location /credentials/status/ {
             proxy_pass http://localhost:{YOUR_IDENTITY_SERVICE_API_PORT};
         }
 
@@ -96,6 +101,8 @@ AGENT_WS_ENDPOINT=wss://fd31-2a03-ed80-1-0-1c38-8e52-ec9d-30e7.ngrok.io/agent-ws
 AGENT_OID4VCI_ENDPOINT=https://fd31-2a03-ed80-1-0-1c38-8e52-ec9d-30e7.ngrok.io/openId
 # logos referenced from OID4VCI issuer metadata must be reachable over https too
 FILE_STORAGE_FS_PUBLIC_URL=https://fd31-2a03-ed80-1-0-1c38-8e52-ec9d-30e7.ngrok.io/openId
+# tails files and status lists (REST API port)
+APP_ENDPOINT=https://fd31-2a03-ed80-1-0-1c38-8e52-ec9d-30e7.ngrok.io
 ```
 
 Note that ngrok only exposes TLS endpoints, so the WebSocket endpoint must use `wss://`.
@@ -106,3 +113,4 @@ Keep in mind that these URLs are persisted at creation time:
 
 - Credential offers and presentation requests embed `AGENT_OID4VCI_ENDPOINT` — recreate QR codes after changing it (and restart the service).
 - Logo URLs (`FILE_STORAGE_FS_PUBLIC_URL`) are stored in the issuer metadata when a user profile or a schema is saved — re-save the profile and the schemas after changing it.
+- The tails file URL (`APP_ENDPOINT`) is written to the ledger when an AnonCreds schema is registered (revocation registry) — register a new schema after changing it. With the default `http://localhost:3000`, wallets fail to share proofs for such credentials ("Could not connect to the server").
