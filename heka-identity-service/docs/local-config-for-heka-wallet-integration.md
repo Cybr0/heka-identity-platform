@@ -58,10 +58,6 @@ http {
             proxy_pass http://localhost:{YOUR_IDENTITY_SERVICE_AGENT_OPENID_PORT}/;
         }
 
-        location /auth/ {
-            proxy_pass http://localhost:{YOUR_AUTH_SERVICE_PORT}/;
-        }
-
         # DIDComm mediator (HTTP and WebSocket share the same port)
         location /mediator {
             rewrite ^/mediator/?(.*)$ /$1 break;
