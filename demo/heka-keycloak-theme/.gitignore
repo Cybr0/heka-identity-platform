@@ -53,6 +53,8 @@ jspm_packages
 /dist
 
 /dist_keycloak
+# Keycloakify cache of the docker-compose theme builder (XDG_CACHE_HOME)
+/.cache
 /build
 /storybook-static
 

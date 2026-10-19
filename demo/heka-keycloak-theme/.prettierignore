@@ -2,6 +2,7 @@ node_modules/
 /src/kc.gen.tsx
 /dist/
 /dist_keycloak/
+/.cache/
 /public/keycloakify-dev-resources/
 /.vscode/
 /.yarn_home/

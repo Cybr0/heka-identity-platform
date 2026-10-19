@@ -4,6 +4,10 @@
 # bind-mounted at runtime, not baked into the image.
 FROM node:20-bookworm
 
+# Keep corepack's yarn in the image regardless of XDG_CACHE_HOME, which the
+# compose service points to the bind-mounted source for the Keycloakify cache.
+ENV COREPACK_HOME=/opt/corepack
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends maven \
     && rm -rf /var/lib/apt/lists/* \

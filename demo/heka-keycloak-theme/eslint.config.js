@@ -7,7 +7,7 @@ import prettierRecommended from 'eslint-plugin-prettier/recommended'
 import unusedImports from 'eslint-plugin-unused-imports'
 
 export default tseslint.config(
-  { ignores: ['dist'] },
+  { ignores: ['dist', '.cache'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx,js}'],

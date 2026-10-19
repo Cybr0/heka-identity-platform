@@ -13,6 +13,11 @@ services:
       context: ../demo/heka-keycloak-theme
       dockerfile: Dockerfile.builder
     working_dir: /theme
+    environment:
+      # Keycloakify builds the jar in its cache dir (node_modules/.cache by default) and then moves it
+      # to dist_keycloak with rename(). node_modules is a separate volume, and rename() fails across
+      # mounts (EXDEV), so keep the cache on the same bind mount as dist_keycloak.
+      - XDG_CACHE_HOME=/theme/.cache
     command: >
       sh -c "yarn install
       && yarn build-keycloak-theme
