@@ -74,8 +74,9 @@ export const Splash: React.FC = () => {
           const isAgentRestarted = await tryRestartExistingAgent(agent, walletSecret)
 
           if (isAgentRestarted) {
+            // Public DID and invitation already exist here, so there is no need to wait for the mediator
             if (Config.MEDIATOR_URL) {
-              await trySetupMediator(agent, Config.MEDIATOR_URL)
+              void trySetupMediator(agent, Config.MEDIATOR_URL)
             }
 
             // The onboarding workflow transitions to the main stack automatically once
