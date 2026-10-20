@@ -1,0 +1,92 @@
+import { registerAs } from '@nestjs/config'
+
+export const introspectionClientAuthMethods = ['client_secret_basic', 'client_secret_post'] as const
+export type IntrospectionClientAuthMethod = (typeof introspectionClientAuthMethods)[number]
+
+/**
+ * Optional OAuth 2.0 Token Introspection (RFC 7662): every bearer token that passed signature verification
+ * is also checked at the OIDC provider, so that tokens revoked there (logout, ended session, admin revocation)
+ * are rejected before they expire. Disabled by default: tokens are then verified statelessly
+ * (signature, `iss`, `aud`, `exp`) and no outbound call is made per request.
+ */
+export interface TokenIntrospectionConfig {
+  enabled: boolean
+  /** Introspection endpoint; when unset it is taken from the provider's discovery document. */
+  url?: string
+  /**
+   * Confidential client the service authenticates with at the introspection endpoint.
+   * Keycloak only answers for tokens whose audience contains this client, i.e. the `OIDC_AUDIENCE` client.
+   */
+  clientId?: string
+  clientSecret?: string
+  /** How the client authenticates at the introspection endpoint. */
+  clientAuthMethod: IntrospectionClientAuthMethod
+  /** Deadline for one introspection request. When it is exceeded the token is rejected (fail closed). */
+  timeoutMs: number
+}
+
+export const tokenIntrospectionConfigDefaults = {
+  clientAuthMethod: 'client_secret_basic' as IntrospectionClientAuthMethod,
+  timeoutMs: 3000,
+}
+
+/** Dev-only secret of the `heka-identity-service` client in `heka-sso-service/keycloak/realm-heka-platform.json`. */
+export const knownIntrospectionDevSecret = 'dev-only-heka-identity-service-secret-do-not-use-in-production'
+
+const MIN_PRODUCTION_SECRET_LENGTH = 16
+
+const text = (value: string | undefined): string | undefined => {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
+}
+
+export default registerAs('tokenIntrospection', (): TokenIntrospectionConfig => {
+  const problems: string[] = []
+  const isProduction = process.env.NODE_ENV?.toLowerCase() === 'production'
+
+  const enabled = text(process.env.OIDC_INTROSPECTION_ENABLED) === 'true'
+  const url = text(process.env.OIDC_INTROSPECTION_URL)
+  const clientId = text(process.env.OIDC_INTROSPECTION_CLIENT_ID)
+  const clientSecret = text(process.env.OIDC_INTROSPECTION_CLIENT_SECRET)
+
+  if (enabled && (!clientId || !clientSecret)) {
+    problems.push(
+      'OIDC_INTROSPECTION_ENABLED=true requires OIDC_INTROSPECTION_CLIENT_ID and OIDC_INTROSPECTION_CLIENT_SECRET',
+    )
+  }
+
+  if (url && !/^https?:\/\//.test(url)) {
+    problems.push('OIDC_INTROSPECTION_URL must be an http(s) URL')
+  }
+
+  const clientAuthMethod = (text(process.env.OIDC_INTROSPECTION_CLIENT_AUTH_METHOD) ??
+    tokenIntrospectionConfigDefaults.clientAuthMethod) as IntrospectionClientAuthMethod
+  if (!introspectionClientAuthMethods.includes(clientAuthMethod)) {
+    problems.push(`OIDC_INTROSPECTION_CLIENT_AUTH_METHOD must be one of ${introspectionClientAuthMethods.join(', ')}`)
+  }
+
+  const timeoutMs = process.env.OIDC_INTROSPECTION_TIMEOUT_MS
+    ? parseInt(process.env.OIDC_INTROSPECTION_TIMEOUT_MS, 10)
+    : tokenIntrospectionConfigDefaults.timeoutMs
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    problems.push('OIDC_INTROSPECTION_TIMEOUT_MS must be a positive integer (milliseconds)')
+  }
+
+  if (isProduction && enabled && clientSecret) {
+    if (clientSecret === knownIntrospectionDevSecret) {
+      problems.push(
+        'OIDC_INTROSPECTION_CLIENT_SECRET is the dev secret from the shipped Keycloak realm; generate a real one for production',
+      )
+    } else if (clientSecret.length < MIN_PRODUCTION_SECRET_LENGTH) {
+      problems.push(
+        `OIDC_INTROSPECTION_CLIENT_SECRET is too short for production (${MIN_PRODUCTION_SECRET_LENGTH}+ characters)`,
+      )
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new Error(`Token introspection configuration is invalid:\n - ${problems.join('\n - ')}`)
+  }
+
+  return { enabled, url, clientId, clientSecret, clientAuthMethod, timeoutMs }
+})

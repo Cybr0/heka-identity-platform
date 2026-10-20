@@ -304,6 +304,28 @@ API requests must carry a Bearer token issued by an OpenID Connect provider — 
 
 The service refuses to start when `OIDC_ISSUER_URL` or `OIDC_AUDIENCE` is missing, and logs the effective issuer, audience, key source and claim paths at startup. A failed discovery is reported as a server error, not as `401`, so a wrong `OIDC_ISSUER_URL` is distinguishable from a bad token. A failed JWKS fetch (non-200 response, invalid JSON, timeout) is reported as `401`, like a bad token; the warning in the log carries the cause, e.g. `Expected 200 OK from the JSON Web Key Set HTTP response`. Only an unreachable JWKS host is a server error.
 
+#### Token introspection (revocation check)
+
+By default tokens are verified statelessly, so a token revoked at the provider (logout, ended session, admin revocation) keeps working until it expires. With token introspection enabled, the service also asks the provider about every bearer token that passed signature verification, using OAuth 2.0 Token Introspection ([RFC 7662](https://www.rfc-editor.org/rfc/rfc7662)), and rejects it unless the answer is `{"active": true}`. The check runs before the user and the wallet are looked up or provisioned, for both REST requests and WebSocket connections.
+
+| Variable                                | Default               | Description                                                                                             |
+| --------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------- |
+| `OIDC_INTROSPECTION_ENABLED`            | `false`               | Set to `true` to turn the check on.                                                                     |
+| `OIDC_INTROSPECTION_URL`                | _(from discovery)_    | Introspection endpoint; when unset it is taken from `introspection_endpoint` in the discovery document. |
+| `OIDC_INTROSPECTION_CLIENT_ID`          | _(required if on)_    | Confidential client the service authenticates with.                                                     |
+| `OIDC_INTROSPECTION_CLIENT_SECRET`      | _(required if on)_    | Its secret. The shipped dev secret and secrets shorter than 16 characters are refused in production.    |
+| `OIDC_INTROSPECTION_CLIENT_AUTH_METHOD` | `client_secret_basic` | `client_secret_basic` or `client_secret_post`.                                                          |
+| `OIDC_INTROSPECTION_TIMEOUT_MS`         | `3000`                | Deadline for one introspection request.                                                                 |
+
+The check fails closed: an inactive token, rejected client credentials (`401`/`403`, also logged as an error), `429`, `5xx`, a redirect, a timeout, a network error or a malformed answer all result in `401`. A provider whose discovery document has no `introspection_endpoint` (and no `OIDC_INTROSPECTION_URL`) is reported as a server error, like a failed discovery. The check itself logs neither the token nor the client secret.
+
+Provider notes:
+
+- **Keycloak** answers only for tokens whose audience contains the calling client, so authenticate as the `OIDC_AUDIENCE` client. The shipped `heka-platform` realm gives the `heka-identity-service` client a dev secret for this (`dev-only-heka-identity-service-secret-do-not-use-in-production`); it still has no login flows.
+- **Auth0** has no RFC 7662 endpoint for access tokens, so leave the check disabled and rely on short access token lifetimes.
+
+Trade-offs: every authenticated request makes one extra call to the provider, adding its latency, and the API is unavailable (`401`) whenever the provider is unreachable.
+
 #### Claim paths
 
 A claim path is resolved in this order: as a literal top-level key (so namespaced names such as `https://heka/roles` work as-is), as a JSON pointer when it starts with `/` (RFC 6901, e.g. `/realm_access/roles` or `/https:~1~1heka~1roles`), otherwise as a dotted path (`realm_access.roles`).

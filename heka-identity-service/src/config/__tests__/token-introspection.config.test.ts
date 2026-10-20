@@ -1,0 +1,123 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import tokenIntrospectionConfig, { knownIntrospectionDevSecret } from 'config/token-introspection'
+
+const ENV_KEYS = [
+  'NODE_ENV',
+  'OIDC_INTROSPECTION_ENABLED',
+  'OIDC_INTROSPECTION_URL',
+  'OIDC_INTROSPECTION_CLIENT_ID',
+  'OIDC_INTROSPECTION_CLIENT_SECRET',
+  'OIDC_INTROSPECTION_CLIENT_AUTH_METHOD',
+  'OIDC_INTROSPECTION_TIMEOUT_MS',
+]
+
+const enabledEnv = () => {
+  process.env.OIDC_INTROSPECTION_ENABLED = 'true'
+  process.env.OIDC_INTROSPECTION_CLIENT_ID = 'heka-identity-service'
+  process.env.OIDC_INTROSPECTION_CLIENT_SECRET = 'a-secret-long-enough-for-production'
+}
+
+describe('token introspection config', () => {
+  let originalEnv: NodeJS.ProcessEnv
+
+  beforeEach(() => {
+    originalEnv = { ...process.env }
+    for (const key of ENV_KEYS) {
+      delete process.env[key]
+    }
+  })
+
+  afterEach(() => {
+    process.env = originalEnv
+  })
+
+  it('is disabled with defaults when nothing is configured', () => {
+    expect(tokenIntrospectionConfig()).toEqual({
+      enabled: false,
+      url: undefined,
+      clientId: undefined,
+      clientSecret: undefined,
+      clientAuthMethod: 'client_secret_basic',
+      timeoutMs: 3000,
+    })
+  })
+
+  it('is enabled with client credentials and takes the endpoint from discovery by default', () => {
+    enabledEnv()
+
+    const config = tokenIntrospectionConfig()
+
+    expect(config.enabled).toBe(true)
+    expect(config.url).toBeUndefined()
+    expect(config.clientId).toBe('heka-identity-service')
+  })
+
+  it('reads the endpoint, client auth method and timeout', () => {
+    enabledEnv()
+    process.env.OIDC_INTROSPECTION_URL = 'https://idp.example.com/introspect'
+    process.env.OIDC_INTROSPECTION_CLIENT_AUTH_METHOD = 'client_secret_post'
+    process.env.OIDC_INTROSPECTION_TIMEOUT_MS = '1500'
+
+    const config = tokenIntrospectionConfig()
+
+    expect(config.url).toBe('https://idp.example.com/introspect')
+    expect(config.clientAuthMethod).toBe('client_secret_post')
+    expect(config.timeoutMs).toBe(1500)
+  })
+
+  it('treats any value other than "true" as disabled', () => {
+    process.env.OIDC_INTROSPECTION_ENABLED = '1'
+
+    expect(tokenIntrospectionConfig().enabled).toBe(false)
+  })
+
+  it.each([
+    ['OIDC_INTROSPECTION_CLIENT_ID', 'OIDC_INTROSPECTION_CLIENT_ID and OIDC_INTROSPECTION_CLIENT_SECRET'],
+    ['OIDC_INTROSPECTION_CLIENT_SECRET', 'OIDC_INTROSPECTION_CLIENT_ID and OIDC_INTROSPECTION_CLIENT_SECRET'],
+  ])('refuses to start when enabled without %s', (key, message) => {
+    enabledEnv()
+    delete process.env[key]
+
+    expect(() => tokenIntrospectionConfig()).toThrow(message)
+  })
+
+  it.each([
+    ['OIDC_INTROSPECTION_URL', 'ftp://idp.example.com/introspect', 'must be an http(s) URL'],
+    [
+      'OIDC_INTROSPECTION_CLIENT_AUTH_METHOD',
+      'private_key_jwt',
+      'must be one of client_secret_basic, client_secret_post',
+    ],
+    ['OIDC_INTROSPECTION_TIMEOUT_MS', '0', 'must be a positive integer'],
+    ['OIDC_INTROSPECTION_TIMEOUT_MS', 'soon', 'must be a positive integer'],
+  ])('rejects an invalid %s (%s)', (key, value, message) => {
+    enabledEnv()
+    process.env[key] = value
+
+    expect(() => tokenIntrospectionConfig()).toThrow(message)
+  })
+
+  it('refuses the shipped dev secret in production', () => {
+    enabledEnv()
+    process.env.NODE_ENV = 'production'
+    process.env.OIDC_INTROSPECTION_CLIENT_SECRET = knownIntrospectionDevSecret
+
+    expect(() => tokenIntrospectionConfig()).toThrow('dev secret from the shipped Keycloak realm')
+  })
+
+  it('refuses a short secret in production', () => {
+    enabledEnv()
+    process.env.NODE_ENV = 'production'
+    process.env.OIDC_INTROSPECTION_CLIENT_SECRET = 'short'
+
+    expect(() => tokenIntrospectionConfig()).toThrow('too short for production')
+  })
+
+  it('accepts the dev secret outside production', () => {
+    enabledEnv()
+    process.env.OIDC_INTROSPECTION_CLIENT_SECRET = knownIntrospectionDevSecret
+
+    expect(tokenIntrospectionConfig().clientSecret).toBe(knownIntrospectionDevSecret)
+  })
+})
