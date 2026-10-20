@@ -1,25 +1,17 @@
-import { HttpModule } from '@nestjs/axios'
-import { Module } from '@nestjs/common'
-import { ConfigType } from '@nestjs/config'
-import { JwtModule } from '@nestjs/jwt'
+import { Global, Module } from '@nestjs/common'
 
 import { AgentModule } from 'common/agent'
-import JwtConfig from 'config/jwt'
 
 import { AuthService } from './auth.service'
-import { JwtStrategy } from './jwt.strategy'
-import { TokenRevocationService } from './token-revocation.service'
+import { JwtAuthGuard } from './jwt-auth.guard'
+import { TokenVerifier } from './token-verifier.service'
 
+// Global so that `@UseGuards(JwtAuthGuard)` resolves `AuthService` in every feature module
+// without each of them importing this module.
+@Global()
 @Module({
-  imports: [
-    JwtModule.registerAsync({
-      useFactory: (jwtConfig: ConfigType<typeof JwtConfig>) => jwtConfig,
-      inject: [JwtConfig.KEY],
-    }),
-    AgentModule,
-    HttpModule,
-  ],
-  providers: [AuthService, JwtStrategy, TokenRevocationService],
-  exports: [AuthService],
+  imports: [AgentModule],
+  providers: [TokenVerifier, AuthService, JwtAuthGuard],
+  exports: [TokenVerifier, AuthService, JwtAuthGuard],
 })
 export class AuthModule {}

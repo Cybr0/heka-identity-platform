@@ -1,11 +1,13 @@
 import agent from './agent'
+import demo from './demo'
 import express from './express'
 import fileStorage from './file-storage'
 import health from './health'
-import jwt from './jwt'
 import mikroOrm from './mikro-orm'
+import oidc from './oidc'
 import pino from './pino'
-import tokenRevocation from './token-revocation'
+import prepareWallet from './prepare-wallet'
+import roleModel from './role-model'
 import webhook from './webhook'
 
-export default [agent, express, health, jwt, mikroOrm, pino, fileStorage, webhook, tokenRevocation]
+export default [agent, express, health, oidc, demo, mikroOrm, pino, fileStorage, webhook, roleModel, prepareWallet]

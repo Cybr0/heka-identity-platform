@@ -21,7 +21,6 @@ Heka Wallet acts as a Verifiable Credentials Holder — it receives, stores, and
   - Passkey-based wallet backup (`ENABLE_WALLET_BACKUP`).
   - External OAuth-based authentication (`ENABLE_EXTERNAL_AUTH`).
   - Public DIDComm invitation (`ENABLE_PUBLIC_INVITATION`).
-  - Keplr / Cosmos chain integration (`ENABLE_KEPLR_INTEGRATION`) — experimental.
 
 ## Prerequisites
 
@@ -97,11 +96,12 @@ See the [Hedera Integration guide](../heka-identity-service/docs/hedera.md) for 
 |----------------------|---------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
 | `OAUTH_STORE_CONFIG` | _(built-in placeholder values)_ | JSON-encoded OAuth client configuration (client ID, redirect URL, scopes, endpoints). Required when `ENABLE_EXTERNAL_AUTH=true`. |
 
+The value must be a single line of JSON: react-native-config reads `.env` line by line on both platforms. The dev Keycloak in `heka-sso-service` ships a ready-made `heka-wallet` realm and client; see [its README](../heka-sso-service/keycloak/README.md#what-the-heka-wallet-realm-contains) for the matching `OAUTH_STORE_CONFIG` value and the `adb reverse` step needed on Android.
+
 ### Feature Flags
 
 | Variable                    | Effect when set to `'true'`                                                                                                                |
 |-----------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
-| `ENABLE_KEPLR_INTEGRATION`  | Enable Keplr / Cosmos chain integration (experimental).                                                                                    |
 | `ENABLE_EXTERNAL_AUTH`      | Enable OAuth-based external authentication.                                                                                                |
 | `ENABLE_WALLET_BACKUP`      | Enable passkey-based wallet backup. Falls back to disabled on devices that don't support passkeys.                                         |
 | `ENABLE_PUBLIC_INVITATION`  | Expose a public DIDComm invitation surface on this wallet.                                                                                 |
