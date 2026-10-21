@@ -19,6 +19,9 @@ import { DidRegistry, IndyBesuSigner } from '../ledger'
 import { toIndyBesuDidDocument } from './DidTypesMapping'
 import { buildDid } from './DidUtils'
 
+// The key of the DID's own account: the DID is built from its address, and only that account can change the DID
+export const OWNER_KEY_FRAGMENT = '#KEY-1'
+
 export class IndyBesuDidRegistrar implements DidRegistrar {
   public readonly supportedMethods = ['indybesu']
 
@@ -34,28 +37,28 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
       },
     })
 
-    const publicJwk = Kms.PublicJwk.fromPublicJwk(key.publicJwk)
-    const didDocument = this.buildDidDocument(publicJwk, {
-      method: options.method,
-      network: options.options.network,
-      endpoints: options.options.endpoints,
-    })
-
-    const endorser = await IndyBesuSigner.create(options.options.endorserKeyId, kms)
-    const identity = await IndyBesuSigner.create(key.keyId, kms)
-
+    let writtenToLedger = false
     try {
-      await didRegistry.endorseDid(toIndyBesuDidDocument(didDocument), identity, endorser)
+      const publicJwk = Kms.PublicJwk.fromPublicJwk(key.publicJwk)
+      const didDocument = this.buildDidDocument(publicJwk, {
+        method: options.method,
+        network: options.options.network,
+        endpoints: options.options.endpoints,
+      })
 
-      // TODO: Check and fix if required the next line. didDocument.verificationMethod![0].id can be undefined.
-      const didDocumentRelativeKeyId = didDocument.verificationMethod![0].id
+      const endorser = await IndyBesuSigner.create(agentContext, options.options.endorserKeyId)
+      const identity = await IndyBesuSigner.create(agentContext, key.keyId)
+
+      await didRegistry.endorseDid(toIndyBesuDidDocument(didDocument), identity, endorser)
+      writtenToLedger = true
+
       await didsApi.import({
         did: didDocument.id,
         didDocument,
         keys: [
           {
             kmsKeyId: key.keyId,
-            didDocumentRelativeKeyId,
+            didDocumentRelativeKeyId: OWNER_KEY_FRAGMENT,
           },
         ],
       })
@@ -67,10 +70,13 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
           state: 'finished',
           did: didDocument.id,
           didDocument: didDocument,
-          secret: options.secret,
         },
       }
     } catch (error) {
+      // Once the DID is on the ledger its key is the only one that can change it, so it is kept
+      if (!writtenToLedger) {
+        await kms.deleteKey({ keyId: key.keyId }).catch(() => undefined)
+      }
       return {
         didDocumentMetadata: {},
         didRegistrationMetadata: {},
@@ -95,10 +101,10 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
   }
 
   private buildDidDocument(publicJwk: Kms.PublicJwk<Kms.Secp256k1PublicJwk>, options: BuildDidDocumentOptions) {
-    const did = buildDid(options.method, options.network, publicJwk.publicKey.publicKey)
+    const did = buildDid(options.method, options.network, publicJwk)
 
     const verificationMethod = getEcdsaSecp256k1VerificationKey2019({
-      id: `${did}#KEY-1`,
+      id: `${did}${OWNER_KEY_FRAGMENT}`,
       publicJwk,
       controller: did,
     })
@@ -135,9 +141,7 @@ export interface IndyBesuDidCreateOptions extends DidCreateOptions {
     endpoints?: IndyBesuEndpoint[]
     endorserKeyId: string
   }
-  secret: {
-    didPrivateKey?: Buffer
-  }
+  secret?: Record<string, never>
 }
 
 export interface IndyBesuDidUpdateOptions extends DidUpdateOptions {

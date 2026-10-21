@@ -12,6 +12,9 @@ import { uuid } from 'src/utils/misc'
 import { initializeMikroOrm, startTestApp } from './helpers'
 import { createAuthToken } from './helpers/jwt'
 
+const indyBesuE2E = process.env.INDY_BESU_E2E === 'true'
+const INDY_BESU_DID_PATTERN = '^did:indybesu:testnet:0x[0-9a-fA-F]{40}$'
+
 describe('E2E public DIDs creation', () => {
   let ormSchemaGenerator: SchemaGenerator
   let orm: MikroORM<PostgreSqlDriver>
@@ -136,6 +139,7 @@ describe('E2E public DIDs creation', () => {
         id: expect.stringMatching(testCase.expected),
       }),
     )
+    return postDidResponse.body.id as string
   }
 
   test('did:key create', async () => {
@@ -159,11 +163,19 @@ describe('E2E public DIDs creation', () => {
     })
   })
 
-  // Need to add Indy-Besu network to CI
-  test.skip('did:indybesu create', async () => {
-    await testDidCreation({
+  // Needs a local Indy-Besu network: INDY_BESU_E2E=true (see docs/setup.md, "Local Indy-Besu network")
+  test.skipIf(!indyBesuE2E)('did:indybesu create', async () => {
+    const did = await testDidCreation({
       method: 'indybesu',
-      expected: `^did:indybesu:`,
+      expected: INDY_BESU_DID_PATTERN,
     })
+
+    // Resolved from the ledger: the DID's own secp256k1 key comes first
+    const adminToken = await createAuthToken(uuid(), Role.Admin)
+    const response = await request(app).get(`/dids/${did}`).auth(adminToken, { type: 'bearer' })
+    expect(response.status).toBe(200)
+    expect(response.body.verificationMethod[0]).toEqual(
+      expect.objectContaining({ id: `${did}#KEY-1`, type: 'EcdsaSecp256k1VerificationKey2019' }),
+    )
   })
 })
