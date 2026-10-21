@@ -7,6 +7,7 @@ import { InjectLogger, Logger } from 'common/logger'
 import { TenantAgent } from '../common/agent'
 import { AnoncredsRegistryService } from '../common/anoncreds-registry'
 import { AuthInfo } from '../common/auth'
+import { assertDidNotDeactivated } from '../common/did-registrar'
 import { Schema, SchemaField, Wallet } from '../common/entities'
 import { StatusListPurpose } from '../common/entities/credential-status-list.entity'
 import { SchemaRegistration } from '../common/entities/schema-registration.entity'
@@ -656,6 +657,9 @@ export class SchemaV2Service {
     if (await this.getSchemaRegistration(schema, { ...request })) {
       throw new BadRequestException(`Schema is already registered here`)
     }
+
+    // A deactivated DID registers nothing new (on Indy-Besu the ledger would reject it with a less clear error)
+    await assertDidNotDeactivated(tenantAgent, request.did)
 
     let schemaRegistration: SchemaRegistration
     switch (request.protocol) {

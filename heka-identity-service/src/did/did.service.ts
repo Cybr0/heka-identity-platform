@@ -24,6 +24,7 @@ import {
   DidRegistrarService,
   fragmentOf,
   isDidRecordDeactivated,
+  isOwnDidDeactivated,
   UpdateDidOptions,
   VERIFICATION_RELATIONSHIPS,
 } from 'common/did-registrar'
@@ -88,11 +89,13 @@ export class DidService {
     const res = await Promise.all(
       didRecords
         .filter((record) => record.did !== this.agent.agencyConfig.indyEndorserDid) // exclude endorser DID
+        .filter((record) => req.includeDeactivated || !isDidRecordDeactivated(record))
         .map(async (record) => {
-          if (record.didDocument) {
-            return record.didDocument
-          }
-          return await tenantAgent.dids.resolveDidDocument(record.did)
+          const didDocument = record.didDocument ?? (await tenantAgent.dids.resolveDidDocument(record.did))
+          // Active DIDs are returned as before; a deactivated one (only on request) carries the flag
+          return isDidRecordDeactivated(record)
+            ? ({ ...didDocument.toJSON(), deactivated: true } as unknown as DidDocumentDto)
+            : didDocument
         }),
     )
 
@@ -176,14 +179,19 @@ export class DidService {
 
   /**
    * The wallet's own DID of a method, the oldest when there are several, without resolving it. The Indy endorser DID,
-   * which every tenant holds, is not the wallet's own.
+   * which every tenant holds, is not the wallet's own; a DID the wallet deactivated is no longer used.
    */
   public async findOwnDid(tenantAgent: TenantAgent, method: string): Promise<string | undefined> {
     const didRecords = await tenantAgent.dids.getCreatedDids({ method })
     const [oldest] = didRecords
-      .filter((record) => record.did !== this.agent.agencyConfig.indyEndorserDid)
+      .filter((record) => record.did !== this.agent.agencyConfig.indyEndorserDid && !isDidRecordDeactivated(record))
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     return oldest?.did
+  }
+
+  /** Whether `did` is a DID of the tenant's wallet that the wallet deactivated. */
+  public async isOwnDidDeactivated(tenantAgent: TenantAgent, did: string): Promise<boolean> {
+    return await isOwnDidDeactivated(tenantAgent, did)
   }
 
   private async runExclusiveForWallet<T>(walletId: string, operation: () => Promise<T>): Promise<T> {
@@ -218,10 +226,10 @@ export class DidService {
     if (!wallet) {
       return undefined
     }
-    const didRecords = await withTenantAgent({ agent: this.agent, tenantId: wallet.tenantId }, (tenantAgent) =>
-      tenantAgent.dids.getCreatedDids({ method }),
+    // A deactivated DID can no longer control anything: the oldest active one is the controller
+    return await withTenantAgent({ agent: this.agent, tenantId: wallet.tenantId }, (tenantAgent) =>
+      this.findOwnDid(tenantAgent, method),
     )
-    return didRecords[0]?.did
   }
 
   public async get(tenantAgent: TenantAgent, did: string): Promise<DidDocumentDto> {
@@ -249,7 +257,10 @@ export class DidService {
       }
     }
 
-    const res = new DidDocumentDto(didDocument)
+    // A DID of the wallet is often resolved from its record, which carries no resolution metadata
+    const deactivated =
+      didResolutionResult.didDocumentMetadata.deactivated === true || (await isOwnDidDeactivated(tenantAgent, did))
+    const res = new DidDocumentDto(didDocument, { deactivated })
 
     logger.trace('<')
     return res

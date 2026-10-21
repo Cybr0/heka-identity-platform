@@ -1,5 +1,6 @@
 import type { DidDocumentMetadata, DidRecord } from '@credo-ts/core'
 
+import { tryParseDid } from '@credo-ts/core'
 import { UnprocessableEntityException } from '@nestjs/common'
 
 import { TenantAgent } from '../agent'
@@ -14,9 +15,9 @@ export function isDidRecordDeactivated(didRecord: DidRecord): boolean {
   return didRecord.getTag(DID_DEACTIVATED_TAG) === true
 }
 
-/** Whether `did` is a DID of the tenant's wallet that the wallet deactivated. */
+/** Whether `did` (or the DID of a DID URL) is a DID of the tenant's wallet that the wallet deactivated. */
 export async function isOwnDidDeactivated(tenantAgent: TenantAgent, did: string): Promise<boolean> {
-  const didRecords = await tenantAgent.dids.getCreatedDids({ did })
+  const didRecords = await tenantAgent.dids.getCreatedDids({ did: tryParseDid(did)?.did ?? did })
   return didRecords.some(isDidRecordDeactivated)
 }
 

@@ -13,7 +13,7 @@ import { Role } from 'src/common/auth'
 import { Wallet } from 'src/common/entities'
 import { uuid } from 'src/utils/misc'
 
-import { initializeMikroOrm, startTestApp } from './helpers'
+import { initializeMikroOrm, SchemaUtilities, startTestApp } from './helpers'
 import { DidUtilities } from './helpers/did'
 import { createAuthToken } from './helpers/jwt'
 
@@ -204,6 +204,79 @@ describe('E2E public DIDs creation', () => {
         })
     }
 
+    /** Creates the OID4VC issuer and verifier of a DID, as the wallet preparation does. */
+    const createOid4VcRecords = async (token: string, did: string) => {
+      const issuer = await request(app)
+        .post('/openid4vc/issuer')
+        .auth(token, { type: 'bearer' })
+        .send({
+          publicIssuerId: did,
+          credentialsSupported: [{ id: 'SdJwtVcExample', format: 'vc+sd-jwt', vct: 'https://example.com/vct' }],
+        })
+      expect(issuer.status).toBe(200)
+      const verifier = await request(app)
+        .post('/openid4vc/verifier')
+        .auth(token, { type: 'bearer' })
+        .send({ publicVerifierId: did })
+      expect(verifier.status).toBe(200)
+    }
+
+    /** AC27: no new OID4VC issuance offer or verification request is signed with a deactivated DID. */
+    const expectOid4VcSessionsRejected = async (token: string, did: string) => {
+      const offer = await request(app)
+        .post('/openid4vc/issuance-session/offer')
+        .auth(token, { type: 'bearer' })
+        .send({
+          publicIssuerId: did,
+          credentials: [
+            {
+              credentialSupportedId: 'SdJwtVcExample',
+              format: 'vc+sd-jwt',
+              issuer: { method: 'did', did },
+              payload: { first_name: 'John' },
+            },
+          ],
+        })
+      expect(offer.status).toBe(422)
+      expect(offer.body.message).toContain('DID is deactivated')
+
+      const verificationRequest = await request(app)
+        .post('/openid4vc/verification-session/request')
+        .auth(token, { type: 'bearer' })
+        .send({
+          publicVerifierId: did,
+          requestSigner: { method: 'did', did },
+          presentationExchange: {
+            definition: {
+              id: '73797b0c-dae6-46a7-9700-7850855fee22',
+              input_descriptors: [
+                {
+                  id: '64125742-8b6c-422e-82cd-1beb5123ee8f',
+                  constraints: { fields: [{ path: ['$.vct'], filter: { type: 'string' } }] },
+                },
+              ],
+            },
+          },
+        })
+      expect(verificationRequest.status).toBe(422)
+      expect(verificationRequest.body.message).toContain('DID is deactivated')
+    }
+
+    /** AC9, AC23: a deactivated DID is only listed on request, marked, and resolves marked. */
+    const expectListedOnlyOnRequest = async (token: string, did: string, method: string) => {
+      const listed = await request(app).get('/dids').query({ own: true, method }).auth(token, { type: 'bearer' })
+      expect(listed.status).toBe(200)
+      expect((listed.body as Array<{ id: string }>).map(({ id }) => id)).not.toContain(did)
+
+      const all = await request(app)
+        .get('/dids')
+        .query({ own: true, method, includeDeactivated: true })
+        .auth(token, { type: 'bearer' })
+      expect(all.body).toContainEqual(expect.objectContaining({ id: did, deactivated: true }))
+
+      expect((await DidUtilities.get(app, token, did)).deactivated).toBe(true)
+    }
+
     const addService = {
       addServices: [{ id: '#svc-1', type: 'LinkedDomains', serviceEndpoint: 'https://example.com' }],
     }
@@ -338,6 +411,8 @@ describe('E2E public DIDs creation', () => {
       expect(ids(afterRemoval.assertionMethod)).toContain(`${did}#key-1`)
       expect(await recordKeys(did)).not.toContainEqual(expect.objectContaining({ didDocumentRelativeKeyId: '#key-2' }))
 
+      await createOid4VcRecords(adminToken, did)
+
       // AC9, AC10: deactivated once; a repeated call writes nothing
       const ledgerDeactivation = vi.spyOn(HederaLedgerService.prototype, 'deactivateDid')
       const deactivated = await DidUtilities.deactivate(app, adminToken, did)
@@ -348,6 +423,17 @@ describe('E2E public DIDs creation', () => {
       expect(again.status).toBe(200)
       expect(again.body.deactivated).toBe(true)
       expect(ledgerDeactivation).toHaveBeenCalledTimes(1)
+      await expectListedOnlyOnRequest(adminToken, did, 'hedera')
+      await expectOid4VcSessionsRejected(adminToken, did)
+
+      // AC14: no new AnonCreds schema for a deactivated issuer (the keys are still there, so the ledger would accept it)
+      const schema = await SchemaUtilities.create(app, adminToken)
+      const registration = await request(app)
+        .post(`/v2/schemas/${schema!.id}/registration`)
+        .auth(adminToken, { type: 'bearer' })
+        .send({ protocol: 'Aries', credentialFormat: 'anoncreds', network: 'hedera', did })
+      expect(registration.status).toBe(422)
+      expect(registration.body.message).toContain('DID is deactivated')
 
       // AC11
       expect(
@@ -357,6 +443,28 @@ describe('E2E public DIDs creation', () => {
           })
         ).status,
       ).toBe(409)
+    })
+
+    test('a deactivated did:hedera is neither a controller nor reused by the wallet preparation', async () => {
+      const adminToken = await createAuthToken(uuid(), Role.Admin)
+      const orgAdminToken = await createAuthToken(uuid(), Role.OrgAdmin, uuid())
+      const created = await postDid(adminToken, 'hedera')
+      expect(created.status).toBe(201)
+      const retired = created.body.id as string
+      expect((await DidUtilities.deactivate(app, adminToken, retired)).status).toBe(200)
+
+      // AC13: Administration has no active hedera DID to control the organization's one
+      const orgDid = await postDid(orgAdminToken, 'hedera')
+      expect(orgDid.status).toBe(422)
+
+      // AC12: the preparation creates a new hedera DID instead of reusing the deactivated one
+      const prepared = await request(app).post('/prepare-wallet').auth(adminToken, { type: 'bearer' }).send({})
+      expect(prepared.status).toBe(201)
+      const hedera = (prepared.body.dids as Array<{ method: string; status: string; did?: string }>).find(
+        ({ method }) => method === 'hedera',
+      )
+      expect(hedera).toEqual(expect.objectContaining({ status: 'created', did: expect.stringMatching(/^did:hedera:/) }))
+      expect(hedera?.did).not.toBe(retired)
     })
 
     // Needs a local Indy-Besu network: INDY_BESU_E2E=true (see docs/setup.md, "Local Indy-Besu network")
@@ -452,6 +560,8 @@ describe('E2E public DIDs creation', () => {
         }
         expect((await resolveFromLedger(did)).didDocumentMetadata.versionId).toBe(versionId)
 
+        await createOid4VcRecords(adminToken, did)
+
         // AC23, AC25: deactivated by the DID account; a repeated call sends no transaction
         fromBlock = await provider.getBlockNumber()
         const deactivated = await DidUtilities.deactivate(app, adminToken, did)
@@ -470,6 +580,9 @@ describe('E2E public DIDs creation', () => {
         expect(again.status).toBe(200)
         expect(again.body.deactivated).toBe(true)
         expect(await registryTransactions(fromBlock)).toHaveLength(0)
+        await expectListedOnlyOnRequest(adminToken, did, 'indybesu')
+        // AC27: the deactivated document keeps its keys, still nothing new is signed with it
+        await expectOid4VcSessionsRejected(adminToken, did)
 
         // AC24
         expect((await DidUtilities.update(app, adminToken, did, addService)).status).toBe(409)

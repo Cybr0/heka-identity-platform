@@ -56,7 +56,7 @@ describe('DidService', () => {
     )
     tenantAgent = createMock<TenantAgent>({
       dids: {
-        getCreatedDids: vi.fn(),
+        getCreatedDids: vi.fn().mockResolvedValue([]),
         resolveDidDocument: vi.fn(),
         resolve: vi.fn(),
       },
@@ -86,6 +86,28 @@ describe('DidService', () => {
       expect(result[1].id).toBe('did:key:z2')
     })
 
+    test('leaves out DIDs the wallet deactivated, unless asked; those are marked', async () => {
+      const deactivated = (name: string) => name === 'hekaDeactivated'
+      vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue([
+        didRecordStub({
+          did: 'did:hedera:testnet:active',
+          didDocument: new DidDocument({ id: 'did:hedera:testnet:active' }),
+        }),
+        didRecordStub({
+          did: 'did:hedera:testnet:retired',
+          didDocument: new DidDocument({ id: 'did:hedera:testnet:retired' }),
+          getTag: deactivated,
+        }),
+      ])
+
+      const active = await didService.find(tenantAgent, { own: true, method: 'hedera' })
+      const all = await didService.find(tenantAgent, { own: true, method: 'hedera', includeDeactivated: true })
+
+      expect(active.map(({ id }) => id)).toEqual(['did:hedera:testnet:active'])
+      expect(all.map(({ id }) => id)).toEqual(['did:hedera:testnet:active', 'did:hedera:testnet:retired'])
+      expect(all.map(({ deactivated }) => deactivated)).toEqual([undefined, true])
+    })
+
     test('uses cached didDocument when available', async () => {
       const mockRecords = [didRecordStub({ did: 'did:key:z1', didDocument: didDocumentStub({ id: 'did:key:z1' }) })]
       vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue(mockRecords)
@@ -108,6 +130,36 @@ describe('DidService', () => {
 
       expect(tenantAgent.dids.resolve).toHaveBeenCalledWith('did:key:z1')
       expect(result.id).toBe('did:key:z1')
+    })
+
+    test('marks a DID deactivated on its ledger', async () => {
+      vi.mocked(tenantAgent.dids.resolve).mockResolvedValue(
+        didResolutionResultStub({ didDocument: { id: 'did:indybesu:x' }, didDocumentMetadata: { deactivated: true } }),
+      )
+
+      expect((await didService.get(tenantAgent, 'did:indybesu:x')).deactivated).toBe(true)
+    })
+
+    test('marks an own DID the wallet deactivated (resolved from its record, without metadata)', async () => {
+      vi.mocked(tenantAgent.dids.resolve).mockResolvedValue(
+        didResolutionResultStub({ didDocument: { id: 'did:hedera:x' } }),
+      )
+      vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue([
+        didRecordStub({ did: 'did:hedera:x', getTag: (name: string) => name === 'hekaDeactivated' }),
+      ])
+
+      const result = await didService.get(tenantAgent, 'did:hedera:x')
+
+      expect(result.deactivated).toBe(true)
+      expect(tenantAgent.dids.getCreatedDids).toHaveBeenCalledWith({ did: 'did:hedera:x' })
+    })
+
+    test('an active DID has no deactivated flag', async () => {
+      vi.mocked(tenantAgent.dids.resolve).mockResolvedValue(
+        didResolutionResultStub({ didDocument: { id: 'did:hedera:x' } }),
+      )
+
+      expect(await didService.get(tenantAgent, 'did:hedera:x')).not.toHaveProperty('deactivated')
     })
 
     test('throws NotFoundException when DID not found', async () => {
@@ -350,6 +402,35 @@ describe('DidService', () => {
           namespace: 'test-ns',
           controller: 'did:hedera:testnet:controller',
         })
+      })
+
+      test('a deactivated DID of the controller wallet is never the controller', async () => {
+        vi.mocked(em.findOneOrFail).mockResolvedValue(
+          entityStub<Wallet>({ id: 'Organization_org-1', publicDid: 'did:key:own' }),
+        )
+        vi.mocked(em.findOne).mockResolvedValue(entityStub<Wallet>({ id: 'Administration', tenantId: 'admin-tenant' }))
+        const retired = didRecordStub({
+          did: 'did:hedera:testnet:retired',
+          createdAt: new Date('2026-01-01'),
+          getTag: (name: string) => name === 'hekaDeactivated',
+        })
+        vi.mocked(controllerTenantAgent.dids.getCreatedDids).mockResolvedValue([
+          retired,
+          didRecordStub({ did: 'did:hedera:testnet:active', createdAt: new Date('2026-02-01') }),
+        ])
+
+        await didService.create(makeAuthInfo(Role.OrgAdmin, 'Organization_org-1', 'org-1'), { method: 'hedera' })
+
+        expect(didRegistrarService.createDid).toHaveBeenCalledWith('tenant-1', 'hedera', {
+          namespace: 'test-ns',
+          controller: 'did:hedera:testnet:active',
+        })
+
+        // Without an active one the controller is missing (422)
+        vi.mocked(controllerTenantAgent.dids.getCreatedDids).mockResolvedValue([retired])
+        await expect(
+          didService.create(makeAuthInfo(Role.OrgAdmin, 'Organization_org-1', 'org-1'), { method: 'hedera' }),
+        ).rejects.toThrow(UnprocessableEntityException)
       })
 
       test('returns 422 until the controller wallet has a DID of the same method', async () => {
@@ -599,6 +680,20 @@ describe('DidService', () => {
 
       expect(await didService.findOwnDid(tenantAgent, 'indy')).toBe('did:indy:older')
       expect(tenantAgent.dids.getCreatedDids).toHaveBeenCalledWith({ method: 'indy' })
+    })
+
+    test('skips a DID the wallet deactivated, so a new one is created in its place', async () => {
+      vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue([
+        didRecordStub({
+          did: 'did:hedera:retired',
+          createdAt: new Date('2026-01-01'),
+          getTag: (name: string) => name === 'hekaDeactivated',
+        }),
+        didRecordStub({ did: 'did:hedera:active', createdAt: new Date('2026-02-01') }),
+      ])
+
+      expect(await didService.findOwnDid(tenantAgent, 'hedera')).toBe('did:hedera:active')
+      expect(await didService.isOwnDidDeactivated(tenantAgent, 'did:hedera:retired')).toBe(true)
     })
 
     test('is undefined when the wallet has no DID of the method', async () => {
