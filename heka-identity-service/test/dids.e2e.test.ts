@@ -1,15 +1,19 @@
 import { Server } from 'net'
 
+import { HederaLedgerService } from '@credo-ts/hedera'
 import { MikroORM } from '@mikro-orm/core'
 import { PostgreSqlDriver, SchemaGenerator } from '@mikro-orm/postgresql'
 import { INestApplication } from '@nestjs/common'
 import request from 'supertest'
 
 import { DID_PATTERN } from 'src/__tests__/constants'
+import { Agent, AGENT_TOKEN } from 'src/common/agent'
 import { Role } from 'src/common/auth'
+import { Wallet } from 'src/common/entities'
 import { uuid } from 'src/utils/misc'
 
 import { initializeMikroOrm, startTestApp } from './helpers'
+import { DidUtilities } from './helpers/did'
 import { createAuthToken } from './helpers/jwt'
 
 const indyBesuE2E = process.env.INDY_BESU_E2E === 'true'
@@ -177,5 +181,179 @@ describe('E2E public DIDs creation', () => {
     expect(response.body.verificationMethod[0]).toEqual(
       expect.objectContaining({ id: `${did}#KEY-1`, type: 'EcdsaSecp256k1VerificationKey2019' }),
     )
+  })
+
+  describe('update and deactivation', () => {
+    const ADMINISTRATION = 'Administration'
+
+    /** The DID as its ledger has it, resolved by the root agent: no wallet record, no cache. */
+    const resolveFromLedger = async (did: string) =>
+      await nestApp.get<string, Agent>(AGENT_TOKEN).dids.resolve(did, { useCache: false })
+
+    /** The key mappings of the DID's record in the Administration wallet. */
+    const recordKeys = async (did: string) => {
+      const { tenantId } = await orm.em.fork().findOneOrFail(Wallet, { id: ADMINISTRATION })
+      return await nestApp
+        .get<string, Agent>(AGENT_TOKEN)
+        .modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
+          const [didRecord] = await tenantAgent.dids.getCreatedDids({ did })
+          return didRecord?.keys ?? []
+        })
+    }
+
+    const addService = {
+      addServices: [{ id: '#svc-1', type: 'LinkedDomains', serviceEndpoint: 'https://example.com' }],
+    }
+
+    test('did:key and did:indy DIDs are not changed (422), the Indy endorser DID never (403)', async () => {
+      const adminToken = await createAuthToken(uuid(), Role.Admin)
+      const keyDid = (await postDid(adminToken)).body.id as string
+      const indyResponse = await postDid(adminToken, 'indy')
+      expect(indyResponse.status).toBe(201)
+      const indyDid = indyResponse.body.id as string
+
+      for (const [did, reason] of [
+        [keyDid, 'did:key DIDs are immutable'],
+        [indyDid, 'did:indy update and deactivation are not implemented yet'],
+      ]) {
+        const updated = await DidUtilities.update(app, adminToken, did, addService)
+        expect(updated.status).toBe(422)
+        expect(updated.body.message).toContain(reason)
+        const deactivated = await DidUtilities.deactivate(app, adminToken, did)
+        expect(deactivated.status).toBe(422)
+        expect(deactivated.body.message).toContain(reason)
+      }
+
+      // The endorser DID is imported into every wallet that creates a did:indy
+      const endorserDid = nestApp.get<string, Agent>(AGENT_TOKEN).agencyConfig.indyEndorserDid
+      expect((await DidUtilities.update(app, adminToken, endorserDid, addService)).status).toBe(403)
+      expect((await DidUtilities.deactivate(app, adminToken, endorserDid)).status).toBe(403)
+    })
+
+    test("a DID that is not the wallet's own is not found (404)", async () => {
+      const adminToken = await createAuthToken(uuid(), Role.Admin)
+      const orgAdminToken = await createAuthToken(uuid(), Role.OrgAdmin, uuid())
+      const othersDid = (await postDid(adminToken)).body.id as string
+      const externalDid = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+
+      for (const did of [othersDid, externalDid]) {
+        expect((await DidUtilities.update(app, orgAdminToken, did, addService)).status).toBe(404)
+        expect((await DidUtilities.deactivate(app, orgAdminToken, did)).status).toBe(404)
+      }
+    })
+
+    test('only Admin, OrgAdmin and Issuer may change DIDs (403 for other roles)', async () => {
+      const orgId = uuid()
+      const did = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+      for (const token of [
+        await createAuthToken(uuid(), Role.OrgManager, orgId),
+        await createAuthToken(uuid(), Role.OrgMember, orgId),
+        await createAuthToken(uuid(), Role.Verifier, orgId),
+        await createAuthToken(uuid(), Role.User),
+      ]) {
+        expect((await DidUtilities.update(app, token, did, addService)).status).toBe(403)
+        expect((await DidUtilities.deactivate(app, token, did)).status).toBe(403)
+      }
+      // The role check comes first; an Issuer gets to the wallet lookup
+      const issuerToken = await createAuthToken(uuid(), Role.Issuer, orgId)
+      expect((await DidUtilities.update(app, issuerToken, did, addService)).status).toBe(404)
+    })
+
+    test('did:hedera: services and keys are added and removed, then the DID is deactivated, once', async () => {
+      const adminToken = await createAuthToken(uuid(), Role.Admin)
+      const created = await postDid(adminToken, 'hedera')
+      expect(created.status).toBe(201)
+      const did = created.body.id as string
+
+      // AC1, AC2: one service and two new keys, the first referenced from assertionMethod
+      const added = await DidUtilities.update(app, adminToken, did, {
+        addServices: [{ id: '#svc-1', type: 'LinkedDomains', serviceEndpoint: 'https://example.com' }],
+        addVerificationMethods: [
+          { id: '#key-1', purposes: ['assertionMethod'] },
+          { id: '#key-2', purposes: [] },
+        ],
+      })
+      expect(added.status).toBe(200)
+      for (const document of [added.body, (await resolveFromLedger(did)).didDocument]) {
+        expect(document.service).toEqual([
+          expect.objectContaining({
+            id: `${did}#svc-1`,
+            type: 'LinkedDomains',
+            serviceEndpoint: 'https://example.com',
+          }),
+        ])
+        expect(document.verificationMethod[0].id).toBe(`${did}#did-root-key`)
+        expect(document.verificationMethod).toContainEqual(
+          expect.objectContaining({
+            id: `${did}#key-1`,
+            type: 'Ed25519VerificationKey2020',
+            publicKeyMultibase: expect.any(String),
+          }),
+        )
+        expect(document.assertionMethod).toContain(`${did}#key-1`)
+      }
+      expect((await DidUtilities.get(app, adminToken, did)).service).toEqual(added.body.service)
+      expect(await recordKeys(did)).toContainEqual(
+        expect.objectContaining({ didDocumentRelativeKeyId: '#key-1', kmsKeyId: expect.any(String) }),
+      )
+
+      // AC4, AC5: rejected before anything is written
+      for (const body of [
+        { removeVerificationMethods: ['#did-root-key'] },
+        { addVerificationMethods: [{ id: '#did-root-key' }] },
+      ]) {
+        expect((await DidUtilities.update(app, adminToken, did, body)).status).toBe(422)
+      }
+      for (const body of [
+        {},
+        { removeServices: Array(11).fill('#svc-1') },
+        { removeServices: [`${did}#svc-1`] },
+        { addServices: [{ id: '#svc-2', type: 'LinkedDomains', serviceEndpoint: 'not a url' }] },
+        { addVerificationMethods: [{ purposes: ['keyAgreement'] }] },
+        { addVerificationMethods: [{ id: '#key-2', publicKeyMultibase: 'z6Mk' }] },
+        { addVerificationMethods: [{ id: '#key-2' }], privateKey: 'secret' },
+      ]) {
+        expect((await DidUtilities.update(app, adminToken, did, body)).status).toBe(400)
+      }
+
+      // A key referenced from a relationship cannot be removed on Hedera: the SDK would leave a dangling reference
+      expect((await DidUtilities.update(app, adminToken, did, { removeVerificationMethods: ['#key-1'] })).status).toBe(
+        422,
+      )
+
+      // AC3: a second consecutive update, checked against the ledger state of the first
+      const removed = await DidUtilities.update(app, adminToken, did, {
+        removeServices: ['#svc-1'],
+        removeVerificationMethods: ['#key-2'],
+      })
+      expect(removed.status).toBe(200)
+      const afterRemoval = (await resolveFromLedger(did)).didDocument!
+      const ids = (entries: Array<string | { id: string }> = []) =>
+        entries.map((entry) => (typeof entry === 'string' ? entry : entry.id))
+      expect(afterRemoval.service ?? []).toEqual([])
+      expect(ids(afterRemoval.verificationMethod)).toEqual([`${did}#did-root-key`, `${did}#key-1`])
+      expect(ids(afterRemoval.assertionMethod)).toContain(`${did}#key-1`)
+      expect(await recordKeys(did)).not.toContainEqual(expect.objectContaining({ didDocumentRelativeKeyId: '#key-2' }))
+
+      // AC9, AC10: deactivated once; a repeated call writes nothing
+      const ledgerDeactivation = vi.spyOn(HederaLedgerService.prototype, 'deactivateDid')
+      const deactivated = await DidUtilities.deactivate(app, adminToken, did)
+      expect(deactivated.status).toBe(200)
+      expect(deactivated.body).toEqual(expect.objectContaining({ id: did, deactivated: true }))
+      expect((await resolveFromLedger(did)).didDocumentMetadata.deactivated).toBe(true)
+      const again = await DidUtilities.deactivate(app, adminToken, did)
+      expect(again.status).toBe(200)
+      expect(again.body.deactivated).toBe(true)
+      expect(ledgerDeactivation).toHaveBeenCalledTimes(1)
+
+      // AC11
+      expect(
+        (
+          await DidUtilities.update(app, adminToken, did, {
+            addServices: [{ id: '#svc-3', type: 'LinkedDomains', serviceEndpoint: 'https://example.com' }],
+          })
+        ).status,
+      ).toBe(409)
+    })
   })
 })

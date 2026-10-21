@@ -1,3 +1,4 @@
+import { DidDocument, DidDocumentRole, DidDocumentService, DidRecord, VerificationMethod } from '@credo-ts/core'
 import { createMock } from '@golevelup/ts-vitest'
 import { EntityManager } from '@mikro-orm/core'
 import {
@@ -13,9 +14,10 @@ import { ConfigType } from '@nestjs/config'
 import { Agent, TenantAgent } from 'common/agent'
 import { AuthInfo, Role } from 'common/auth'
 import { AuthorizationService } from 'common/authz'
-import { DidRegistrarService } from 'common/did-registrar'
+import { DidRegistrar, DidRegistrarService } from 'common/did-registrar'
 import { User, Wallet } from 'common/entities'
 import { Logger } from 'common/logger'
+import { WalletLockService } from 'common/wallet-lock'
 
 import { didDocumentStub, didRecordStub, didResolutionResultStub, entityStub } from '../../../test/helpers/mock-records'
 import AgentConfig from '../../config/agent'
@@ -28,6 +30,7 @@ describe('DidService', () => {
   let logger: Logger
   let didRegistrarService: DidRegistrarService
   let tenantAgent: TenantAgent
+  let walletLockService: WalletLockService
   const agentConfig = createMock<ConfigType<typeof AgentConfig>>({ didMethods: ['key', 'indy'] })
 
   beforeEach(() => {
@@ -39,6 +42,9 @@ describe('DidService', () => {
     vi.mocked(em.nativeUpdate).mockResolvedValue(1)
     logger = createMock<Logger>()
     didRegistrarService = createMock<DidRegistrarService>()
+    walletLockService = createMock<WalletLockService>({
+      runExclusive: vi.fn((_walletId: string, _timeout: number, operation: () => Promise<unknown>) => operation()),
+    })
     didService = new DidService(
       agent,
       em,
@@ -46,6 +52,7 @@ describe('DidService', () => {
       didRegistrarService,
       agentConfig,
       new AuthorizationService({ enabled: true }),
+      walletLockService,
     )
     tenantAgent = createMock<TenantAgent>({
       dids: {
@@ -158,6 +165,36 @@ describe('DidService', () => {
 
       expect(result.methods).toEqual(['key', 'indy'])
     })
+
+    test('returns the capabilities of every configured method, and of those only', () => {
+      const capable = ['hedera', 'indybesu']
+      vi.mocked(didRegistrarService.supportsUpdate).mockImplementation((method) => capable.includes(method))
+      vi.mocked(didRegistrarService.supportsDeactivate).mockImplementation((method) => capable.includes(method))
+      vi.mocked(didRegistrarService.supportsController).mockImplementation((method) => method === 'hedera')
+      const makeService = (didMethods: string[]) =>
+        new DidService(
+          agent,
+          em,
+          logger,
+          didRegistrarService,
+          createMock<ConfigType<typeof AgentConfig>>({ didMethods }),
+          new AuthorizationService({ enabled: true }),
+          walletLockService,
+        )
+
+      expect(makeService(['indy', 'key', 'hedera']).getMethods()).toEqual({
+        methods: ['indy', 'key', 'hedera'],
+        capabilities: {
+          indy: { update: false, deactivate: false, controller: false },
+          key: { update: false, deactivate: false, controller: false },
+          hedera: { update: true, deactivate: true, controller: true },
+        },
+      })
+      expect(makeService(['key', 'indybesu']).getMethods().capabilities).toEqual({
+        key: { update: false, deactivate: false, controller: false },
+        indybesu: { update: true, deactivate: true, controller: false },
+      })
+    })
   })
 
   describe('create', () => {
@@ -172,7 +209,15 @@ describe('DidService', () => {
     })
 
     const makeService = (enabled: boolean) =>
-      new DidService(agent, em, logger, didRegistrarService, agentConfig, new AuthorizationService({ enabled }))
+      new DidService(
+        agent,
+        em,
+        logger,
+        didRegistrarService,
+        agentConfig,
+        new AuthorizationService({ enabled }),
+        walletLockService,
+      )
 
     test('creates the main-method DID in the caller tenant and persists it as the wallet public DID', async () => {
       const wallet = entityStub<Wallet>({ id: 'Administration', publicDid: undefined })
@@ -560,6 +605,252 @@ describe('DidService', () => {
       vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue([didRecordStub({ did: 'endorser-did' })])
 
       expect(await didService.findOwnDid(tenantAgent, 'indy')).toBeUndefined()
+    })
+  })
+
+  describe('update and deactivate', () => {
+    const did = 'did:hedera:testnet:z6Mkowner_0.0.1'
+    const rootKey = `${did}#did-root-key`
+    let didRecord: DidRecord
+    let didRepository: { update: ReturnType<typeof vi.fn> }
+    let hederaRegistrar: DidRegistrar
+
+    const makeAuthInfo = (role: Role, walletId = 'Organization_org-1'): AuthInfo => ({
+      userId: 'user-1',
+      user: entityStub<User>({}),
+      userName: 'testuser',
+      role,
+      orgId: 'org-1',
+      walletId,
+      tenantId: 'tenant-1',
+    })
+    const orgAdmin = makeAuthInfo(Role.OrgAdmin)
+
+    const currentDocument = () =>
+      new DidDocument({
+        context: ['https://www.w3.org/ns/did/v1'],
+        id: did,
+        verificationMethod: [
+          new VerificationMethod({ id: rootKey, type: 'Ed25519VerificationKey2020', controller: did }),
+          new VerificationMethod({ id: `${did}#key-1`, type: 'Ed25519VerificationKey2020', controller: did }),
+        ],
+        authentication: [rootKey],
+        assertionMethod: [rootKey, `${did}#key-1`],
+        service: [new DidDocumentService({ id: `${did}#svc-1`, type: 'LinkedDomains', serviceEndpoint: 'https://a' })],
+      })
+
+    const ledgerResolution = (didDocumentMetadata: Record<string, unknown> = {}) =>
+      didResolutionResultStub({ didDocument: currentDocument(), didDocumentMetadata })
+
+    beforeEach(() => {
+      didRecord = new DidRecord({ did, role: DidDocumentRole.Created, didDocument: currentDocument() })
+      didRepository = { update: vi.fn() }
+      Object.assign(tenantAgent, {
+        context: {},
+        dependencyManager: { resolve: vi.fn().mockReturnValue(didRepository) },
+      })
+      vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue([didRecord])
+      vi.mocked(tenantAgent.dids.resolve).mockResolvedValue(ledgerResolution())
+      hederaRegistrar = { protectedKeyFragment: '#did-root-key' } as DidRegistrar
+      vi.mocked(didRegistrarService.getUpdatingDidRegistrar).mockReturnValue(hederaRegistrar)
+      vi.mocked(didRegistrarService.updateDid).mockResolvedValue(currentDocument())
+      vi.mocked(didRegistrarService.deactivateDid).mockResolvedValue(new DidDocument({ id: did }))
+    })
+
+    describe('update', () => {
+      test('runs under the wallet lock and passes the operations, checked against the ledger document', async () => {
+        const result = await didService.update(orgAdmin, tenantAgent, did, {
+          addServices: [{ id: '#svc-2', type: 'LinkedDomains', serviceEndpoint: 'https://example.com' }],
+          removeVerificationMethods: ['#key-1'],
+        })
+
+        expect(result.id).toBe(did)
+        expect(walletLockService.runExclusive).toHaveBeenCalledWith('Organization_org-1', 60, expect.any(Function))
+        expect(tenantAgent.dids.resolve).toHaveBeenCalledWith(did, { useCache: false, useLocalCreatedDidRecord: false })
+        expect(didRegistrarService.getUpdatingDidRegistrar).toHaveBeenCalledWith('hedera', 'update')
+        expect(didRegistrarService.updateDid).toHaveBeenCalledWith(tenantAgent, 'hedera', {
+          did,
+          currentDidDocument: expect.objectContaining({ id: did }),
+          addServices: [{ id: '#svc-2', type: 'LinkedDomains', serviceEndpoint: 'https://example.com' }],
+          removeServices: [],
+          addVerificationMethods: [],
+          removeVerificationMethods: ['#key-1'],
+        })
+      })
+
+      test('gives new keys the lowest unused #key-<n> (case-insensitive) and the default purposes', async () => {
+        await didService.update(orgAdmin, tenantAgent, did, {
+          addVerificationMethods: [{}, { id: '#KEY-2' }, { purposes: [] }],
+        })
+
+        expect(vi.mocked(didRegistrarService.updateDid).mock.calls[0][2].addVerificationMethods).toEqual([
+          { id: '#key-3', purposes: ['assertionMethod', 'authentication'] },
+          { id: '#KEY-2', purposes: ['assertionMethod', 'authentication'] },
+          { id: '#key-4', purposes: [] },
+        ])
+      })
+
+      test.each([
+        [{ removeVerificationMethods: ['#did-root-key'] }],
+        [{ removeVerificationMethods: ['#DID-ROOT-KEY'] }],
+        [{ addVerificationMethods: [{ id: '#did-root-key' }] }],
+        [{ addServices: [{ id: '#Did-Root-Key', type: 'LinkedDomains', serviceEndpoint: 'https://a' }] }],
+      ])('rejects any operation on the key that controls the DID: %j', async (req) => {
+        await expect(didService.update(orgAdmin, tenantAgent, did, req)).rejects.toThrow(
+          'is the key that controls the DID and cannot be changed',
+        )
+        expect(didRegistrarService.updateDid).not.toHaveBeenCalled()
+      })
+
+      test.each([
+        [{ addServices: [{ id: '#svc-1', type: 'LinkedDomains', serviceEndpoint: 'https://a' }] }, 'already exists'],
+        [{ addVerificationMethods: [{ id: '#Key-1' }] }, 'already exists'],
+        [{ addVerificationMethods: [{ id: '#key-9' }, { id: '#key-9' }] }, 'already exists'],
+        [{ removeServices: ['#svc-9'] }, 'Service #svc-9 does not exist'],
+        [{ removeServices: ['#key-1'] }, 'Service #key-1 does not exist'],
+        [{ removeVerificationMethods: ['#svc-1'] }, 'Verification method #svc-1 does not exist'],
+        [{ removeVerificationMethods: ['#key-1', '#key-1'] }, 'is named more than once'],
+      ])('rejects %j with 422 (%s)', async (req, message) => {
+        const update = didService.update(orgAdmin, tenantAgent, did, req)
+
+        await expect(update).rejects.toThrow(UnprocessableEntityException)
+        await expect(update).rejects.toThrow(message)
+        expect(didRegistrarService.updateDid).not.toHaveBeenCalled()
+      })
+
+      test.each([[{}], [{ addServices: [], removeServices: [] }], [{ removeServices: Array(11).fill('#svc-1') }]])(
+        'rejects %j: between 1 and 10 operations (400)',
+        async (req) => {
+          await expect(didService.update(orgAdmin, tenantAgent, did, req)).rejects.toThrow(BadRequestException)
+          expect(walletLockService.runExclusive).not.toHaveBeenCalled()
+        },
+      )
+
+      test('a method that cannot update DIDs is rejected by the registrar service (422)', async () => {
+        vi.mocked(didRegistrarService.getUpdatingDidRegistrar).mockImplementation(() => {
+          throw new UnprocessableEntityException('did:key DIDs are immutable and cannot be updated or deactivated')
+        })
+        didRecord = new DidRecord({ did: 'did:key:z6Mk1', role: DidDocumentRole.Created })
+        vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue([didRecord])
+
+        await expect(
+          didService.update(orgAdmin, tenantAgent, 'did:key:z6Mk1', { removeServices: ['#svc-1'] }),
+        ).rejects.toThrow('immutable')
+        expect(didRegistrarService.getUpdatingDidRegistrar).toHaveBeenCalledWith('key', 'update')
+        expect(tenantAgent.dids.resolve).not.toHaveBeenCalled()
+      })
+
+      test('the shared Indy endorser DID is never changed (403)', async () => {
+        await expect(
+          didService.update(orgAdmin, tenantAgent, 'endorser-did', { removeServices: ['#svc-1'] }),
+        ).rejects.toThrow(ForbiddenException)
+        expect(tenantAgent.dids.getCreatedDids).not.toHaveBeenCalled()
+      })
+
+      test("a DID that is not the wallet's own is not found (404)", async () => {
+        vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue([])
+
+        await expect(didService.update(orgAdmin, tenantAgent, did, { removeServices: ['#svc-1'] })).rejects.toThrow(
+          new NotFoundException('DID not found in this wallet'),
+        )
+        expect(tenantAgent.dids.getCreatedDids).toHaveBeenCalledWith({ did })
+      })
+
+      test('a Verifier cannot change DIDs (403); with the role model disabled it can', async () => {
+        const verifier = makeAuthInfo(Role.Verifier)
+
+        await expect(didService.update(verifier, tenantAgent, did, { removeServices: ['#svc-1'] })).rejects.toThrow(
+          ForbiddenException,
+        )
+        const unrestricted = new DidService(
+          agent,
+          em,
+          logger,
+          didRegistrarService,
+          agentConfig,
+          new AuthorizationService({ enabled: false }),
+          walletLockService,
+        )
+        await expect(
+          unrestricted.update(verifier, tenantAgent, did, { removeServices: ['#svc-1'] }),
+        ).resolves.toBeDefined()
+      })
+
+      test('a DID the wallet deactivated is not updated (409)', async () => {
+        didRecord.setTag('hekaDeactivated', true)
+
+        await expect(didService.update(orgAdmin, tenantAgent, did, { removeServices: ['#svc-1'] })).rejects.toThrow(
+          ConflictException,
+        )
+        expect(didRegistrarService.updateDid).not.toHaveBeenCalled()
+      })
+
+      test('a DID deactivated on its ledger is not updated (409), and the wallet records it', async () => {
+        vi.mocked(tenantAgent.dids.resolve).mockResolvedValue(ledgerResolution({ deactivated: true }))
+
+        await expect(didService.update(orgAdmin, tenantAgent, did, { removeServices: ['#svc-1'] })).rejects.toThrow(
+          ConflictException,
+        )
+        expect(didRegistrarService.updateDid).not.toHaveBeenCalled()
+        expect(didRecord.getTag('hekaDeactivated')).toBe(true)
+        expect(didRepository.update).toHaveBeenCalledWith(tenantAgent.context, didRecord)
+      })
+    })
+
+    describe('deactivate', () => {
+      test('deactivates through the registrar under the wallet lock and tags the DID record', async () => {
+        const result = await didService.deactivate(orgAdmin, tenantAgent, did)
+
+        expect(result).toEqual(expect.objectContaining({ id: did, deactivated: true }))
+        expect(walletLockService.runExclusive).toHaveBeenCalledWith('Organization_org-1', 60, expect.any(Function))
+        expect(didRegistrarService.getUpdatingDidRegistrar).toHaveBeenCalledWith('hedera', 'deactivate')
+        expect(didRegistrarService.deactivateDid).toHaveBeenCalledWith(tenantAgent, 'hedera', did)
+        expect(didRecord.getTag('hekaDeactivated')).toBe(true)
+        expect(didRepository.update).toHaveBeenCalledWith(tenantAgent.context, didRecord)
+      })
+
+      test('a DID the wallet deactivated is returned without a ledger write (idempotent)', async () => {
+        didRecord.setTag('hekaDeactivated', true)
+
+        const result = await didService.deactivate(orgAdmin, tenantAgent, did)
+
+        expect(result).toEqual(expect.objectContaining({ id: did, deactivated: true }))
+        expect(didRegistrarService.deactivateDid).not.toHaveBeenCalled()
+        expect(tenantAgent.dids.resolve).not.toHaveBeenCalled()
+      })
+
+      test('a DID deactivated on its ledger is tagged and returned without a second ledger write', async () => {
+        vi.mocked(tenantAgent.dids.resolve).mockResolvedValue(ledgerResolution({ deactivated: true }))
+
+        const result = await didService.deactivate(orgAdmin, tenantAgent, did)
+
+        expect(result.deactivated).toBe(true)
+        expect(didRegistrarService.deactivateDid).not.toHaveBeenCalled()
+        expect(didRecord.getTag('hekaDeactivated')).toBe(true)
+      })
+
+      test('shares the checks of an update: endorser DID (403), foreign DID (404), method (422)', async () => {
+        await expect(didService.deactivate(orgAdmin, tenantAgent, 'endorser-did')).rejects.toThrow(ForbiddenException)
+
+        vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValueOnce([])
+        await expect(didService.deactivate(orgAdmin, tenantAgent, did)).rejects.toThrow(NotFoundException)
+
+        vi.mocked(didRegistrarService.getUpdatingDidRegistrar).mockImplementation(() => {
+          throw new UnprocessableEntityException('did:indy update and deactivation are not implemented yet')
+        })
+        await expect(didService.deactivate(orgAdmin, tenantAgent, did)).rejects.toThrow('not implemented yet')
+        expect(didRegistrarService.deactivateDid).not.toHaveBeenCalled()
+      })
+
+      test('a failed ledger write leaves the record untagged', async () => {
+        vi.mocked(didRegistrarService.deactivateDid).mockRejectedValue(
+          new InternalServerErrorException('DID document was not deactivated: timeout'),
+        )
+
+        await expect(didService.deactivate(orgAdmin, tenantAgent, did)).rejects.toThrow('not deactivated')
+        expect(didRecord.getTag('hekaDeactivated')).toBeUndefined()
+        expect(didRepository.update).not.toHaveBeenCalled()
+      })
     })
   })
 })

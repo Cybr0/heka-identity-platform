@@ -73,6 +73,10 @@ export class DidIndyBesuRegistrar implements DidRegistrar {
   // controller is not verified yet. Tracked as a follow-up.
   public readonly supportsController = false
 
+  // update/deactivate: work item 3
+  public readonly supportsUpdate = false
+  public readonly supportsDeactivate = false
+
   private readonly network!: string
   private readonly endorserConfig!: IndyBesuEndorserConfig
 
