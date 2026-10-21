@@ -85,7 +85,7 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
         didRegistrationMetadata: {},
         didState: {
           state: 'failed',
-          reason: `unknownError: ${(error as Error).message}`,
+          reason: `unknownError: ${errorReason(error)}`,
         },
       }
     }
@@ -110,8 +110,10 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
       return failedResult(reason)
     }
 
-    if (options.didDocumentOperation && options.didDocumentOperation !== 'setDidDocument') {
-      return await fail(`did:indybesu replaces the whole document; '${options.didDocumentOperation}' is not supported`)
+    // The type allows only `setDidDocument`, but the options come through Credo's generic `DidsApi.update`
+    const operation: string | undefined = options.didDocumentOperation
+    if (operation && operation !== 'setDidDocument') {
+      return await fail(`did:indybesu replaces the whole document; '${operation}' is not supported`)
     }
     if (!(options.didDocument instanceof DidDocument) || options.didDocument.id !== did) {
       return await fail('The new DID document must be a DidDocument of the DID')
@@ -146,7 +148,7 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
         .then(({ document }) => canonicalJson(document) === canonicalJson(ledgerDocument))
         .catch(() => false)
       if (!written) {
-        return await fail((error as Error).message)
+        return await fail(errorReason(error))
       }
     }
 
@@ -192,7 +194,7 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
         .then(({ metadata }) => metadata?.deactivated === true)
         .catch(() => false)
       if (!deactivated) {
-        return failedResult((error as Error).message)
+        return failedResult(errorReason(error))
       }
     }
 
@@ -262,6 +264,14 @@ export type IndyBesuDidDeactivateOptions = DidDeactivateOptions
 
 function findOwnerKey(keys: DidDocumentKey[] = []): DidDocumentKey | undefined {
   return keys.find(({ didDocumentRelativeKeyId }) => didDocumentRelativeKeyId.endsWith(OWNER_KEY_FRAGMENT))
+}
+
+/** The reason of a failure, as returned to the API client: a KMS error names the KMS key id, so it is not passed on. */
+function errorReason(error: unknown): string {
+  if (error instanceof Kms.KeyManagementError) {
+    return 'A key of the DID is not available in the wallet'
+  }
+  return error instanceof Error ? error.message : String(error)
 }
 
 function failedResult(reason: string): DidUpdateResult & DidDeactivateResult {

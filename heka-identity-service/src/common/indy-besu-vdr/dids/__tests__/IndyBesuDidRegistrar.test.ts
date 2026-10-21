@@ -219,6 +219,15 @@ describe('IndyBesuDidRegistrar', () => {
       expect(didRecord.didDocument?.service).toBeUndefined()
     })
 
+    test('update: a KMS error is reported without the KMS key id', async () => {
+      vi.mocked(IndyBesuSigner.create).mockRejectedValue(new Kms.KeyManagementKeyNotFoundError('owner-key', ['askar']))
+
+      const result = await registrar.update(context.agentContext, { did: DID, didDocument: newDocument() })
+
+      expect(result.didState).toEqual({ state: 'failed', reason: 'A key of the DID is not available in the wallet' })
+      expect(JSON.stringify(result)).not.toContain('owner-key')
+    })
+
     test('update: a failed wait for a write that made it to the ledger counts as written', async () => {
       context.didRegistry.updateDid.mockRejectedValue(new Error('timeout'))
       // The ledger returns the document without its empty properties, in its own property order
