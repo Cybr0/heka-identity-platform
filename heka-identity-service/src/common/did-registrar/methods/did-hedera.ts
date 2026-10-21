@@ -134,7 +134,11 @@ export class DidHederaRegistrar implements DidRegistrar {
       return {
         didDocumentMetadata: {},
         didRegistrationMetadata: {},
-        didState: { state: 'failed', reason: `Unable to update DID: ${(error as Error).message}` },
+        // A KMS error names the KMS key id, which is not passed on
+        didState: {
+          state: 'failed',
+          reason: `Unable to update DID: ${error instanceof Kms.KeyManagementError ? 'key management error' : (error as Error).message}`,
+        },
       }
     }
   }
@@ -150,6 +154,15 @@ export class DidHederaRegistrar implements DidRegistrar {
    * deleted.
    */
   private async resyncDidRecord(tenantAgent: TenantAgent, did: string, createdKeys: DidDocumentKey[]): Promise<void> {
+    // The failure of the update is what the caller gets to see, not a failure of this clean-up
+    await this.syncDidRecordFromLedger(tenantAgent, did, createdKeys).catch(() => undefined)
+  }
+
+  private async syncDidRecordFromLedger(
+    tenantAgent: TenantAgent,
+    did: string,
+    createdKeys: DidDocumentKey[],
+  ): Promise<void> {
     const { didDocument } = await tenantAgent.dids
       .resolve(did, { useCache: false, useLocalCreatedDidRecord: false })
       .catch(() => ({ didDocument: null }))

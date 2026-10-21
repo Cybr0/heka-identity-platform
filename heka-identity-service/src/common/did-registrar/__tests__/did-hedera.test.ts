@@ -6,6 +6,7 @@ import {
   DidDocumentService,
   DidRecord,
   DidRepository,
+  Kms,
   TypedArrayEncoder,
   VerificationMethod,
 } from '@credo-ts/core'
@@ -255,6 +256,27 @@ describe('DidHederaRegistrar', () => {
     expect(result.didState).toEqual({ state: 'failed', reason: 'Unable to update DID: network down' })
     expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
     expect(didRepository.update).not.toHaveBeenCalled()
+  })
+
+  test('a failing clean-up does not hide why the update failed', async () => {
+    vi.mocked(tenantAgent.dids.update).mockResolvedValue(failed('Unable update DID: INSUFFICIENT_PAYER_BALANCE'))
+    didRepository.update.mockRejectedValue(new Error('storage down'))
+
+    const result = await registrar.updateDid(tenantAgent, options({ removeServices: ['#svc-1'] }))
+
+    expect(result.didState).toEqual({ state: 'failed', reason: 'Unable update DID: INSUFFICIENT_PAYER_BALANCE' })
+  })
+
+  test('a KMS error is reported without the KMS key id', async () => {
+    vi.mocked(tenantAgent.kms.createKey).mockRejectedValue(new Kms.KeyManagementKeyExistsError('kms-key-id', 'askar'))
+
+    const result = await registrar.updateDid(
+      tenantAgent,
+      options({ addVerificationMethods: [{ id: '#key-2', purposes: [] }] }),
+    )
+
+    expect(result.didState).toEqual({ state: 'failed', reason: 'Unable to update DID: key management error' })
+    expect(JSON.stringify(result)).not.toContain('kms-key-id')
   })
 
   test('deactivates through Credo, keeping the keys', async () => {
