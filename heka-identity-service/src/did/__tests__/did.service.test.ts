@@ -702,6 +702,24 @@ describe('DidService', () => {
         expect(didRegistrarService.updateDid).not.toHaveBeenCalled()
       })
 
+      test('did:indybesu: the owner key #KEY-1 is protected in any case (422)', async () => {
+        const indyBesuDid = 'did:indybesu:testnet:0x2c7536E3605D9C16a7a3D7b1898e529396a65c23'
+        vi.mocked(didRegistrarService.getUpdatingDidRegistrar).mockReturnValue({
+          protectedKeyFragment: '#KEY-1',
+        } as DidRegistrar)
+        vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue([
+          new DidRecord({ did: indyBesuDid, role: DidDocumentRole.Created }),
+        ])
+
+        for (const req of [{ removeVerificationMethods: ['#key-1'] }, { addVerificationMethods: [{ id: '#Key-1' }] }]) {
+          await expect(didService.update(orgAdmin, tenantAgent, indyBesuDid, req)).rejects.toThrow(
+            'is the key that controls the DID and cannot be changed',
+          )
+        }
+        expect(didRegistrarService.getUpdatingDidRegistrar).toHaveBeenCalledWith('indybesu', 'update')
+        expect(didRegistrarService.updateDid).not.toHaveBeenCalled()
+      })
+
       test.each([
         [{ addServices: [{ id: '#svc-1', type: 'LinkedDomains', serviceEndpoint: 'https://a' }] }, 'already exists'],
         [{ addVerificationMethods: [{ id: '#Key-1' }] }, 'already exists'],

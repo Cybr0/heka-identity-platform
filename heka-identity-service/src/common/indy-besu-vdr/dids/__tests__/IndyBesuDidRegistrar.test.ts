@@ -1,7 +1,19 @@
-import { AgentContext, DidRepository, DidsApi, Kms, TypedArrayEncoder } from '@credo-ts/core'
+import {
+  AgentContext,
+  DidDocument,
+  DidDocumentRole,
+  DidDocumentService,
+  DidRecord,
+  DidRepository,
+  DidsApi,
+  Kms,
+  TypedArrayEncoder,
+  VerificationMethod,
+} from '@credo-ts/core'
 import { getBytes, SigningKey } from 'ethers'
 
 import { DidRegistry, IndyBesuSigner } from '../../ledger'
+import { toIndyBesuDidDocument } from '../DidTypesMapping'
 import { IndyBesuDidRegistrar } from '../IndyBesuDidRegistrar'
 
 const OWNER_PRIVATE_KEY = '4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318'
@@ -116,6 +128,166 @@ describe('IndyBesuDidRegistrar', () => {
 
       expect(result.didState.state).toBe('failed')
       expect(context.kms.deleteKey).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('update and deactivate', () => {
+    const ownerKey = new VerificationMethod({
+      id: `${DID}#KEY-1`,
+      type: 'EcdsaSecp256k1VerificationKey2019',
+      controller: DID,
+      publicKeyBase58: 'owner-public-key',
+    })
+    const document = (extra: Partial<ConstructorParameters<typeof DidDocument>[0]> = {}) =>
+      new DidDocument({
+        context: ['https://www.w3.org/ns/did/v1'],
+        id: DID,
+        verificationMethod: [ownerKey],
+        authentication: [ownerKey.id],
+        assertionMethod: [ownerKey.id],
+        ...extra,
+      })
+    const newDocument = () =>
+      document({
+        service: [new DidDocumentService({ id: `${DID}#svc-1`, type: 'LinkedDomains', serviceEndpoint: 'https://a' })],
+        verificationMethod: [
+          ownerKey,
+          new VerificationMethod({
+            id: `${DID}#key-2`,
+            type: 'Ed25519VerificationKey2020',
+            controller: DID,
+            publicKeyMultibase: 'z6Mk2',
+          }),
+        ],
+      })
+    const newKeys = [{ kmsKeyId: 'new-key', didDocumentRelativeKeyId: '#key-2' }]
+    let didRecord: DidRecord
+
+    beforeEach(() => {
+      didRecord = new DidRecord({
+        did: DID,
+        role: DidDocumentRole.Created,
+        didDocument: document(),
+        keys: [
+          { kmsKeyId: 'owner-key', didDocumentRelativeKeyId: '#KEY-1' },
+          // A key of a verification method that is no longer in the document
+          { kmsKeyId: 'stale-key', didDocumentRelativeKeyId: '#key-9' },
+        ],
+      })
+      context.didRepository.findCreatedDid.mockResolvedValue(didRecord)
+      context.didRegistry.resolveDid.mockResolvedValue({
+        document: toIndyBesuDidDocument(document()),
+        metadata: { deactivated: false },
+      })
+    })
+
+    test('update: replaces the document, signed by the DID account, then updates the DID record', async () => {
+      const result = await registrar.update(context.agentContext, {
+        did: DID,
+        didDocumentOperation: 'setDidDocument',
+        didDocument: newDocument(),
+        secret: { keys: newKeys },
+      })
+
+      expect(result.didState).toMatchObject({ state: 'finished', did: DID })
+      expect(IndyBesuSigner.create).toHaveBeenCalledWith(context.agentContext, 'owner-key')
+      expect(IndyBesuSigner.create).not.toHaveBeenCalledWith(context.agentContext, 'endorser')
+      const [ledgerDocument, signer] = context.didRegistry.updateDid.mock.calls[0]
+      expect(ledgerDocument).toEqual(toIndyBesuDidDocument(newDocument()))
+      expect(signer.address).toBe(OWNER_ADDRESS)
+      expect(didRecord.didDocument?.service?.[0].id).toBe(`${DID}#svc-1`)
+      expect(didRecord.keys).toEqual([
+        { kmsKeyId: 'owner-key', didDocumentRelativeKeyId: '#KEY-1' },
+        { kmsKeyId: 'new-key', didDocumentRelativeKeyId: '#key-2' },
+      ])
+      expect(context.didRepository.update).toHaveBeenCalledWith(context.agentContext, didRecord)
+      expect(context.kms.deleteKey).not.toHaveBeenCalled()
+    })
+
+    test('update: a failed write with the ledger unchanged fails, deletes the new keys and keeps the record', async () => {
+      context.didRegistry.updateDid.mockRejectedValue(new Error('Ledger Client: Transaction reverted: 0xe9aeaecd'))
+
+      const result = await registrar.update(context.agentContext, {
+        did: DID,
+        didDocument: newDocument(),
+        secret: { keys: newKeys },
+      })
+
+      expect(result.didState).toEqual({ state: 'failed', reason: 'Ledger Client: Transaction reverted: 0xe9aeaecd' })
+      expect(context.kms.deleteKey).toHaveBeenCalledWith({ keyId: 'new-key' })
+      expect(context.didRepository.update).not.toHaveBeenCalled()
+      expect(didRecord.didDocument?.service).toBeUndefined()
+    })
+
+    test('update: a failed wait for a write that made it to the ledger counts as written', async () => {
+      context.didRegistry.updateDid.mockRejectedValue(new Error('timeout'))
+      // The ledger returns the document without its empty properties, in its own property order
+      const { capabilityDelegation, capabilityInvocation, keyAgreement, alsoKnownAs, ...written } =
+        toIndyBesuDidDocument(newDocument())
+      expect([capabilityDelegation, capabilityInvocation, keyAgreement, alsoKnownAs]).toEqual([[], [], [], []])
+      context.didRegistry.resolveDid
+        .mockResolvedValueOnce({ document: toIndyBesuDidDocument(document()), metadata: {} })
+        .mockResolvedValueOnce({ document: written, metadata: {} })
+
+      const result = await registrar.update(context.agentContext, {
+        did: DID,
+        didDocument: newDocument(),
+        secret: { keys: newKeys },
+      })
+
+      expect(result.didState.state).toBe('finished')
+      expect(context.kms.deleteKey).not.toHaveBeenCalled()
+      expect(context.didRepository.update).toHaveBeenCalled()
+    })
+
+    test('update: the owner key must stay first and unchanged', async () => {
+      const changedOwner = newDocument()
+      changedOwner.verificationMethod = [changedOwner.verificationMethod![1], ownerKey]
+
+      const result = await registrar.update(context.agentContext, {
+        did: DID,
+        didDocument: changedOwner,
+        secret: { keys: newKeys },
+      })
+
+      expect(result.didState).toMatchObject({ state: 'failed', reason: expect.stringContaining('#KEY-1') })
+      expect(context.didRegistry.updateDid).not.toHaveBeenCalled()
+      expect(context.kms.deleteKey).toHaveBeenCalledWith({ keyId: 'new-key' })
+    })
+
+    test('update: a DID that is not in the wallet fails without a write', async () => {
+      context.didRepository.findCreatedDid.mockResolvedValue(null)
+
+      const result = await registrar.update(context.agentContext, { did: DID, didDocument: newDocument() })
+
+      expect(result.didState).toEqual({ state: 'failed', reason: 'DID not found in this wallet' })
+      expect(context.didRegistry.updateDid).not.toHaveBeenCalled()
+    })
+
+    test('deactivate: sent by the DID account, the document is kept', async () => {
+      const result = await registrar.deactivate(context.agentContext, { did: DID })
+
+      expect(result.didState).toMatchObject({ state: 'finished', did: DID, didDocument: didRecord.didDocument })
+      expect(result.didDocumentMetadata).toEqual({ deactivated: true })
+      const [did, signer] = context.didRegistry.deactivateDid.mock.calls[0]
+      expect(did).toBe(DID)
+      expect(signer.address).toBe(OWNER_ADDRESS)
+      expect(context.kms.deleteKey).not.toHaveBeenCalled()
+    })
+
+    test('deactivate: a failed write fails unless the ledger reports the DID deactivated', async () => {
+      context.didRegistry.deactivateDid.mockRejectedValue(new Error('RPC unavailable'))
+
+      expect((await registrar.deactivate(context.agentContext, { did: DID })).didState).toEqual({
+        state: 'failed',
+        reason: 'RPC unavailable',
+      })
+
+      context.didRegistry.resolveDid.mockResolvedValue({
+        document: toIndyBesuDidDocument(document()),
+        metadata: { deactivated: true },
+      })
+      expect((await registrar.deactivate(context.agentContext, { did: DID })).didState.state).toBe('finished')
     })
   })
 })

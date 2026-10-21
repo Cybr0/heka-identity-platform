@@ -6,9 +6,10 @@ import { ConfigType } from '@nestjs/config'
 
 import { Agent, TenantAgent } from 'common/agent'
 import AgentConfig from 'config/agent'
+import { INSECURE_DEFAULTS } from 'config/insecure-defaults'
 
 import { DidRegistrarService } from '../did-registrar.service'
-import { DidHederaRegistrar } from '../methods'
+import { DidHederaRegistrar, DidIndyBesuRegistrar } from '../methods'
 
 describe('DidRegistrarService: update and deactivate', () => {
   let service: DidRegistrarService
@@ -42,6 +43,23 @@ describe('DidRegistrarService: update and deactivate', () => {
 
   test('a method that is not configured is not supported (400), as on creation', () => {
     expect(() => service.getUpdatingDidRegistrar('indybesu', 'update')).toThrow(BadRequestException)
+  })
+
+  test('indybesu DIDs can be updated and deactivated once the method is configured', () => {
+    const withIndyBesu = new DidRegistrarService(
+      createMock<Agent>(),
+      createMock<ConfigType<typeof AgentConfig>>({
+        didMethods: ['key', 'indybesu'],
+        indyBesuNetwork: 'testnet',
+        indyBesuEndorserPrivateKey: INSECURE_DEFAULTS.INDY_BESU_ENDORSER_PRIVATE_KEY,
+        indyBesuEndorserPublicKey: '03af80b90d25145da28c583359beb47b21796b2fe1a23c1511e443e7a64dfdb27d',
+      }),
+      createMock<EntityManager>(),
+    )
+
+    expect(withIndyBesu.getUpdatingDidRegistrar('indybesu', 'deactivate')).toBeInstanceOf(DidIndyBesuRegistrar)
+    expect(withIndyBesu.supportsUpdate('indybesu')).toBe(true)
+    expect(withIndyBesu.supportsDeactivate('indybesu')).toBe(true)
   })
 
   test('hedera DIDs can be updated and deactivated', () => {

@@ -1,14 +1,30 @@
-import type { DidCreateResult } from '@credo-ts/core'
+import type { DidCreateResult, DidDeactivateResult, DidDocumentKey, DidUpdateResult } from '@credo-ts/core'
 
 import { transformPrivateKeyToPrivateJwk } from '@credo-ts/askar'
-import { Kms, TypedArrayEncoder } from '@credo-ts/core'
+import { DidDocument, getEd25519VerificationKey2020, JsonTransformer, Kms, TypedArrayEncoder } from '@credo-ts/core'
+import { UnprocessableEntityException } from '@nestjs/common'
 import { ConfigType } from '@nestjs/config'
 import { SigningKey } from 'ethers'
 
 import AgentConfig from '../../../config/agent'
 import { TenantAgent } from '../../agent'
-import { IndyBesuDidCreateOptions } from '../../indy-besu-vdr'
-import { CreateDidOptions, DidRegistrar } from '../did-registrar.types'
+import { IndyBesuDidCreateOptions, IndyBesuDidUpdateOptions } from '../../indy-besu-vdr'
+import {
+  CreateDidOptions,
+  DidRegistrar,
+  fragmentOf,
+  UpdateDidOptions,
+  VERIFICATION_PURPOSES,
+  VERIFICATION_RELATIONSHIPS,
+} from '../did-registrar.types'
+
+// The service types the Indy-Besu VDR accepts in a DID document
+export const INDY_BESU_SERVICE_TYPES = ['LinkedDomains', 'DIDCommMessaging', 'CredentialRegistry', 'OID4VCI', 'OID4VP']
+
+const ED25519_2020_CONTEXT = 'https://w3id.org/security/suites/ed25519-2020/v1'
+
+type DidDocumentJson = Record<string, unknown> & { '@context'?: string | string[] }
+type RelationshipEntry = string | { id: string }
 
 type IndyBesuEndorserConfig = Pick<
   ConfigType<typeof AgentConfig>,
@@ -73,9 +89,10 @@ export class DidIndyBesuRegistrar implements DidRegistrar {
   // controller is not verified yet. Tracked as a follow-up.
   public readonly supportsController = false
 
-  // update/deactivate: work item 3
-  public readonly supportsUpdate = false
-  public readonly supportsDeactivate = false
+  // Sent by the DID's own account; the owner key `#KEY-1` (the DID's address) never changes
+  public readonly supportsUpdate = true
+  public readonly supportsDeactivate = true
+  public readonly protectedKeyFragment = '#KEY-1'
 
   private readonly network!: string
   private readonly endorserConfig!: IndyBesuEndorserConfig
@@ -100,5 +117,96 @@ export class DidIndyBesuRegistrar implements DidRegistrar {
       },
       secret: {},
     })
+  }
+
+  /**
+   * Applies the operations to the current ledger document and writes the result as one replacement, in one
+   * transaction. Ids are full DID URLs on Indy-Besu. New keys are Ed25519: authority on the ledger only comes from the
+   * owner address, so a key of another type would gain nothing there.
+   */
+  public async updateDid(tenantAgent: TenantAgent, options: UpdateDidOptions): Promise<DidUpdateResult> {
+    const { did, currentDidDocument } = options
+    const unsupportedType = options.addServices.find(({ type }) => !INDY_BESU_SERVICE_TYPES.includes(type))
+    if (unsupportedType) {
+      throw new UnprocessableEntityException(
+        `did:indybesu supports service types: ${INDY_BESU_SERVICE_TYPES.join(', ')} (not '${unsupportedType.type}')`,
+      )
+    }
+
+    const createdKeys: DidDocumentKey[] = []
+    try {
+      const json = JsonTransformer.toJSON(currentDidDocument) as DidDocumentJson
+      const entryId = (entry: RelationshipEntry) => (typeof entry === 'string' ? entry : entry.id)
+      const removedServices = new Set(options.removeServices)
+      const removedKeys = new Set(options.removeVerificationMethods)
+
+      json.service = [
+        ...((json.service as Array<{ id: string }> | undefined) ?? []).filter(
+          ({ id }) => !removedServices.has(fragmentOf(id)),
+        ),
+        ...options.addServices.map(({ id, type, serviceEndpoint }) => ({ id: `${did}${id}`, type, serviceEndpoint })),
+      ]
+      json.verificationMethod = ((json.verificationMethod as Array<{ id: string }> | undefined) ?? []).filter(
+        ({ id }) => !removedKeys.has(fragmentOf(id)),
+      )
+      for (const relationship of VERIFICATION_RELATIONSHIPS) {
+        json[relationship] = ((json[relationship] as RelationshipEntry[] | undefined) ?? []).filter(
+          (entry) => !removedKeys.has(fragmentOf(entryId(entry))),
+        )
+      }
+
+      for (const { id, purposes } of options.addVerificationMethods) {
+        const { keyId, publicJwk } = await tenantAgent.kms.createKey({ type: { kty: 'OKP', crv: 'Ed25519' } })
+        createdKeys.push({ kmsKeyId: keyId, didDocumentRelativeKeyId: id })
+        const verificationMethod = getEd25519VerificationKey2020({
+          id: `${did}${id}`,
+          controller: did,
+          publicJwk: Kms.PublicJwk.fromPublicJwk(publicJwk),
+        })
+        // Appended, so the owner key stays first: signing picks the first verification method
+        ;(json.verificationMethod as unknown[]).push(JsonTransformer.toJSON(verificationMethod))
+        for (const purpose of VERIFICATION_PURPOSES.filter((purpose) => purposes.includes(purpose))) {
+          ;(json[purpose] as RelationshipEntry[]).push(verificationMethod.id)
+        }
+      }
+
+      if (options.addVerificationMethods.length) {
+        const context = json['@context'] ?? []
+        const contexts = Array.isArray(context) ? context : [context]
+        if (!contexts.includes(ED25519_2020_CONTEXT)) {
+          json['@context'] = [...contexts, ED25519_2020_CONTEXT]
+        }
+      }
+
+      // `setDidDocument` is the ledger's own semantics here (unlike did:hedera)
+      const result = await tenantAgent.dids.update<IndyBesuDidUpdateOptions>({
+        did,
+        didDocumentOperation: 'setDidDocument',
+        didDocument: JsonTransformer.fromJSON(json, DidDocument),
+        secret: { keys: createdKeys },
+      })
+      if (result.didState.state !== 'finished') {
+        await deleteKeys(tenantAgent, createdKeys)
+      }
+      return result
+    } catch (error) {
+      await deleteKeys(tenantAgent, createdKeys)
+      return {
+        didDocumentMetadata: {},
+        didRegistrationMetadata: {},
+        didState: { state: 'failed', reason: `Unable to update DID: ${(error as Error).message}` },
+      }
+    }
+  }
+
+  /** `DidService` does not send a second deactivation: the ledger would reject it. */
+  public deactivateDid(tenantAgent: TenantAgent, did: string): Promise<DidDeactivateResult> {
+    return tenantAgent.dids.deactivate({ did })
+  }
+}
+
+async function deleteKeys(tenantAgent: TenantAgent, keys: DidDocumentKey[]): Promise<void> {
+  for (const key of keys) {
+    await tenantAgent.kms.deleteKey({ keyId: key.kmsKeyId }).catch(() => undefined)
   }
 }

@@ -4,6 +4,7 @@ import { HederaLedgerService } from '@credo-ts/hedera'
 import { MikroORM } from '@mikro-orm/core'
 import { PostgreSqlDriver, SchemaGenerator } from '@mikro-orm/postgresql'
 import { INestApplication } from '@nestjs/common'
+import { JsonRpcProvider } from 'ethers'
 import request from 'supertest'
 
 import { DID_PATTERN } from 'src/__tests__/constants'
@@ -17,6 +18,8 @@ import { DidUtilities } from './helpers/did'
 import { createAuthToken } from './helpers/jwt'
 
 const indyBesuE2E = process.env.INDY_BESU_E2E === 'true'
+// IndyDidRegistry contract of the Indy-Besu network
+const INDY_DID_REGISTRY = '0x0000000000000000000000000000000000003333'
 const INDY_BESU_DID_PATTERN = '^did:indybesu:testnet:0x[0-9a-fA-F]{40}$'
 
 describe('E2E public DIDs creation', () => {
@@ -355,5 +358,122 @@ describe('E2E public DIDs creation', () => {
         ).status,
       ).toBe(409)
     })
+
+    // Needs a local Indy-Besu network: INDY_BESU_E2E=true (see docs/setup.md, "Local Indy-Besu network")
+    test.skipIf(!indyBesuE2E)(
+      'did:indybesu: the DID account replaces the document and deactivates it, without the endorser',
+      async () => {
+        const agencyConfig = nestApp.get<string, Agent>(AGENT_TOKEN).agencyConfig
+        const provider = new JsonRpcProvider(agencyConfig.indyBesuNodeAddress)
+        const registryTransactions = async (fromBlock: number) => {
+          const transactions = []
+          for (let number = fromBlock + 1; number <= (await provider.getBlockNumber()); number++) {
+            const block = await provider.getBlock(number, true)
+            transactions.push(
+              ...(block?.prefetchedTransactions ?? []).filter(
+                (transaction) => transaction.to?.toLowerCase() === INDY_DID_REGISTRY.toLowerCase(),
+              ),
+            )
+          }
+          return transactions
+        }
+
+        const adminToken = await createAuthToken(uuid(), Role.Admin)
+        const created = await postDid(adminToken, 'indybesu')
+        expect(created.status).toBe(201)
+        const did = created.body.id as string
+        const address = did.split(':').pop()!
+        // The DID's account never received any funds: gas is free on the network
+        expect(await provider.getBalance(address)).toBe(BigInt(0))
+        const ownerKey = (await resolveFromLedger(did)).didDocument!.verificationMethod![0]
+        expect(ownerKey.id).toBe(`${did}#KEY-1`)
+
+        // AC20, AC25
+        let fromBlock = await provider.getBlockNumber()
+        const withService = await DidUtilities.update(app, adminToken, did, addService)
+        expect(withService.status).toBe(200)
+        let onLedger = (await resolveFromLedger(did)).didDocument!
+        expect(onLedger.service).toEqual([
+          expect.objectContaining({
+            id: `${did}#svc-1`,
+            type: 'LinkedDomains',
+            serviceEndpoint: 'https://example.com',
+          }),
+        ])
+        expect(onLedger.verificationMethod![0]).toEqual(ownerKey)
+        const updateTransactions = await registryTransactions(fromBlock)
+        expect(updateTransactions).toHaveLength(1)
+        expect(updateTransactions[0].from.toLowerCase()).toBe(address.toLowerCase())
+
+        // AC21: a new Ed25519 key, then its removal with every reference in one transaction
+        const withKey = await DidUtilities.update(app, adminToken, did, {
+          addVerificationMethods: [{ id: '#key-2', purposes: ['assertionMethod'] }],
+        })
+        expect(withKey.status).toBe(200)
+        onLedger = (await resolveFromLedger(did)).didDocument!
+        expect(onLedger.verificationMethod).toEqual([
+          ownerKey,
+          expect.objectContaining({
+            id: `${did}#key-2`,
+            type: 'Ed25519VerificationKey2020',
+            publicKeyMultibase: expect.stringMatching(/^z6Mk/),
+          }),
+        ])
+        expect(onLedger.assertionMethod).toEqual([`${did}#KEY-1`, `${did}#key-2`])
+        expect(await recordKeys(did)).toContainEqual(
+          expect.objectContaining({ didDocumentRelativeKeyId: '#key-2', kmsKeyId: expect.any(String) }),
+        )
+
+        fromBlock = await provider.getBlockNumber()
+        expect(
+          (await DidUtilities.update(app, adminToken, did, { removeVerificationMethods: ['#key-2'] })).status,
+        ).toBe(200)
+        onLedger = (await resolveFromLedger(did)).didDocument!
+        expect(onLedger.verificationMethod).toEqual([ownerKey])
+        expect(onLedger.assertionMethod).toEqual([`${did}#KEY-1`])
+        expect(await registryTransactions(fromBlock)).toHaveLength(1)
+        expect(await recordKeys(did)).not.toContainEqual(
+          expect.objectContaining({ didDocumentRelativeKeyId: '#key-2' }),
+        )
+
+        // AC22: nothing is written
+        const { versionId } = (await resolveFromLedger(did)).didDocumentMetadata
+        const wrongType = await DidUtilities.update(app, adminToken, did, {
+          addServices: [{ id: '#svc-2', type: 'Foo', serviceEndpoint: 'https://example.com' }],
+        })
+        expect(wrongType.status).toBe(422)
+        expect(wrongType.body.message).toContain('LinkedDomains, DIDCommMessaging, CredentialRegistry, OID4VCI, OID4VP')
+        for (const body of [
+          { removeVerificationMethods: ['#KEY-1'] },
+          { removeVerificationMethods: ['#key-1'] },
+          { addVerificationMethods: [{ id: '#Key-1' }] },
+        ]) {
+          expect((await DidUtilities.update(app, adminToken, did, body)).status).toBe(422)
+        }
+        expect((await resolveFromLedger(did)).didDocumentMetadata.versionId).toBe(versionId)
+
+        // AC23, AC25: deactivated by the DID account; a repeated call sends no transaction
+        fromBlock = await provider.getBlockNumber()
+        const deactivated = await DidUtilities.deactivate(app, adminToken, did)
+        expect(deactivated.status).toBe(200)
+        expect(deactivated.body).toEqual(expect.objectContaining({ id: did, deactivated: true }))
+        const resolution = await resolveFromLedger(did)
+        expect(resolution.didDocumentMetadata.deactivated).toBe(true)
+        // The ledger keeps the document of a deactivated DID
+        expect(resolution.didDocument!.verificationMethod).toEqual([ownerKey])
+        const deactivationTransactions = await registryTransactions(fromBlock)
+        expect(deactivationTransactions).toHaveLength(1)
+        expect(deactivationTransactions[0].from.toLowerCase()).toBe(address.toLowerCase())
+
+        fromBlock = await provider.getBlockNumber()
+        const again = await DidUtilities.deactivate(app, adminToken, did)
+        expect(again.status).toBe(200)
+        expect(again.body.deactivated).toBe(true)
+        expect(await registryTransactions(fromBlock)).toHaveLength(0)
+
+        // AC24
+        expect((await DidUtilities.update(app, adminToken, did, addService)).status).toBe(409)
+      },
+    )
   })
 })

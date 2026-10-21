@@ -4,9 +4,12 @@ import {
   DidCreateResult,
   DidDeactivateOptions,
   DidDeactivateResult,
+  DidDocument,
   DidDocumentBuilder,
+  DidDocumentKey,
   DidDocumentService,
   DidRegistrar,
+  DidRepository,
   DidUpdateOptions,
   DidUpdateResult,
   getEcdsaSecp256k1VerificationKey2019,
@@ -16,7 +19,7 @@ import {
 
 import { DidRegistry, IndyBesuSigner } from '../ledger'
 
-import { toIndyBesuDidDocument } from './DidTypesMapping'
+import { fromIndyBesuDidDocument, toIndyBesuDidDocument } from './DidTypesMapping'
 import { buildDid } from './DidUtils'
 
 // The key of the DID's own account: the DID is built from its address, and only that account can change the DID
@@ -88,16 +91,117 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
     }
   }
 
-  public update(agentContext: AgentContext, options: IndyBesuDidUpdateOptions): Promise<DidUpdateResult> {
-    throw new Error(
-      'Method not implemented. PoC: https://github.com/DSRCorporation/aries-framework-javascript/tree/indy-besu-demo/packages/indy-vdr/src',
+  /**
+   * Replaces the DID document on the ledger, sent by the DID's own account (`updateDid`, no endorser). The owner key must
+   * stay the first verification method, unchanged: it is the DID's address and the only key the ledger accepts.
+   */
+  public async update(agentContext: AgentContext, options: IndyBesuDidUpdateOptions): Promise<DidUpdateResult> {
+    const didRegistry = agentContext.dependencyManager.resolve(DidRegistry)
+    const didRepository = agentContext.dependencyManager.resolve(DidRepository)
+    const kms = agentContext.dependencyManager.resolve(Kms.KeyManagementApi)
+    const { did } = options
+    const newKeys = options.secret?.keys ?? []
+
+    // The keys generated for this update are of no use when it fails
+    const fail = async (reason: string): Promise<DidUpdateResult> => {
+      for (const key of newKeys) {
+        await kms.deleteKey({ keyId: key.kmsKeyId }).catch(() => undefined)
+      }
+      return failedResult(reason)
+    }
+
+    if (options.didDocumentOperation && options.didDocumentOperation !== 'setDidDocument') {
+      return await fail(`did:indybesu replaces the whole document; '${options.didDocumentOperation}' is not supported`)
+    }
+    if (!(options.didDocument instanceof DidDocument) || options.didDocument.id !== did) {
+      return await fail('The new DID document must be a DidDocument of the DID')
+    }
+    const didDocument = options.didDocument
+
+    const didRecord = await didRepository.findCreatedDid(agentContext, did)
+    const ownerKey = didRecord && findOwnerKey(didRecord.keys)
+    if (!didRecord || !ownerKey) {
+      return await fail('DID not found in this wallet')
+    }
+
+    const ledgerDocument = toIndyBesuDidDocument(didDocument)
+    try {
+      const { document: currentDocument } = await didRegistry.resolveDid(did)
+      const [currentOwner] = currentDocument.verificationMethod
+      const [newOwner] = ledgerDocument.verificationMethod
+      if (
+        !currentOwner ||
+        !newOwner ||
+        currentOwner.id !== newOwner.id ||
+        currentOwner.publicKeyBase58 !== newOwner.publicKeyBase58
+      ) {
+        return await fail(`The owner key ${OWNER_KEY_FRAGMENT} must stay the first verification method, unchanged`)
+      }
+
+      await didRegistry.updateDid(ledgerDocument, await IndyBesuSigner.create(agentContext, ownerKey.kmsKeyId))
+    } catch (error) {
+      // The transaction may have been mined although waiting for it failed: the ledger decides
+      const written = await didRegistry
+        .resolveDid(did)
+        .then(({ document }) => canonicalJson(document) === canonicalJson(ledgerDocument))
+        .catch(() => false)
+      if (!written) {
+        return await fail((error as Error).message)
+      }
+    }
+
+    const keptKeys = (didRecord.keys ?? []).filter(
+      (key) =>
+        key !== ownerKey &&
+        (didDocument.verificationMethod ?? []).some(({ id }) => id.endsWith(key.didDocumentRelativeKeyId)),
     )
+    didRecord.didDocument = didDocument
+    didRecord.keys = [ownerKey, ...keptKeys, ...newKeys]
+    await didRepository.update(agentContext, didRecord)
+
+    return {
+      didDocumentMetadata: {},
+      didRegistrationMetadata: {},
+      didState: { state: 'finished', did, didDocument },
+    }
   }
 
-  public deactivate(agentContext: AgentContext, options: IndyBesuDidDeactivateOptions): Promise<DidDeactivateResult> {
-    throw new Error(
-      'Method not implemented. PoC: https://github.com/DSRCorporation/aries-framework-javascript/tree/indy-besu-demo/packages/indy-vdr/src',
-    )
+  /**
+   * Deactivates the DID on the ledger, sent by the DID's own account (`deactivateDid`). The ledger keeps the document
+   * and rejects a second deactivation. The keys stay in the wallet.
+   */
+  public async deactivate(
+    agentContext: AgentContext,
+    options: IndyBesuDidDeactivateOptions,
+  ): Promise<DidDeactivateResult> {
+    const didRegistry = agentContext.dependencyManager.resolve(DidRegistry)
+    const didRepository = agentContext.dependencyManager.resolve(DidRepository)
+    const { did } = options
+
+    const didRecord = await didRepository.findCreatedDid(agentContext, did)
+    const ownerKey = didRecord && findOwnerKey(didRecord.keys)
+    if (!didRecord || !ownerKey) {
+      return failedResult('DID not found in this wallet')
+    }
+
+    try {
+      await didRegistry.deactivateDid(did, await IndyBesuSigner.create(agentContext, ownerKey.kmsKeyId))
+    } catch (error) {
+      const deactivated = await didRegistry
+        .resolveDid(did)
+        .then(({ metadata }) => metadata?.deactivated === true)
+        .catch(() => false)
+      if (!deactivated) {
+        return failedResult((error as Error).message)
+      }
+    }
+
+    const didDocument = didRecord.didDocument ?? fromIndyBesuDidDocument((await didRegistry.resolveDid(did)).document)
+    return {
+      didDocumentMetadata: { deactivated: true },
+      didRegistrationMetadata: {},
+      didState: { state: 'finished', did, didDocument },
+    }
   }
 
   private buildDidDocument(publicJwk: Kms.PublicJwk<Kms.Secp256k1PublicJwk>, options: BuildDidDocumentOptions) {
@@ -144,18 +248,44 @@ export interface IndyBesuDidCreateOptions extends DidCreateOptions {
   secret?: Record<string, never>
 }
 
+// The DID's own key signs updates and deactivations; it is taken from the DID record
 export interface IndyBesuDidUpdateOptions extends DidUpdateOptions {
-  options: {
-    network: string
-    accountKeyId: string
+  didDocumentOperation?: 'setDidDocument'
+  didDocument: DidDocument
+  secret?: {
+    // Keys of verification methods new in the document
+    keys?: DidDocumentKey[]
   }
 }
 
-export interface IndyBesuDidDeactivateOptions extends DidDeactivateOptions {
-  options: {
-    network: string
-    accountKeyId: string
+export type IndyBesuDidDeactivateOptions = DidDeactivateOptions
+
+function findOwnerKey(keys: DidDocumentKey[] = []): DidDocumentKey | undefined {
+  return keys.find(({ didDocumentRelativeKeyId }) => didDocumentRelativeKeyId.endsWith(OWNER_KEY_FRAGMENT))
+}
+
+function failedResult(reason: string): DidUpdateResult & DidDeactivateResult {
+  return {
+    didDocumentMetadata: {},
+    didRegistrationMetadata: {},
+    didState: { state: 'failed', reason },
   }
+}
+
+/**
+ * JSON with object keys sorted and empty arrays left out, to compare documents regardless of property order: the ledger
+ * returns a document without its empty properties.
+ */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item: unknown) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(
+          Object.entries(item)
+            .filter(([, property]) => !(Array.isArray(property) && property.length === 0))
+            .sort(([a], [b]) => a.localeCompare(b)),
+        )
+      : item,
+  )
 }
 
 export interface BuildDidDocumentOptions {
