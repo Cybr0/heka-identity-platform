@@ -9,7 +9,7 @@ By default, the API is available at <http://localhost:3000> when the service is 
 Endpoints are grouped by domain:
 
 - **Connections** (`/connections/*`) — DIDComm connection invitations and lifecycle.
-- **DIDs** (`/dids/*`) — public DID creation and lookup.
+- **DIDs** (`/dids/*`) — public DID creation, lookup, update and deactivation (see [DID update and deactivation](#did-update-and-deactivation)).
 - **Schemas** (`/schemas/*`, `/schemas/v2/*`) — credential schema management. Use v2 for new integrations.
 - **Credential Definitions** (`/credential-definitions/*`) — AnonCreds credential definitions.
 - **Credentials** (`/credentials/*`, `/credentials/v2/*`) — DIDComm-flavored issuance (v1) and template-based / OID4VC-flavored issuance (v2).
@@ -24,6 +24,41 @@ Endpoints are grouped by domain:
 - **User** (`/user/*`) — webhook / WebSocket subscription for notification events (see below).
 - **Prepare Wallet** (`/prepare-wallet`) — bootstrap a tenant wallet with default state.
 - **Health** (`/health`) — memory + database health probe.
+
+## DID update and deactivation
+
+A wallet can change or retire the DIDs it created (`POST /dids`), because it holds their keys. The routes are open to the Admin, OrgAdmin and Issuer roles; a DID of another wallet, or any external DID, is `404`. A parent wallet has no authority over the DIDs of its children.
+
+- `PATCH /dids/:did` adds or removes services and verification methods. The body lists operations, at most 10 in total; ids are relative fragments:
+
+  ```json
+  {
+    "addServices": [{ "id": "#svc-1", "type": "LinkedDomains", "serviceEndpoint": "https://example.com" }],
+    "removeServices": ["#svc-0"],
+    "addVerificationMethods": [{ "id": "#key-1", "purposes": ["assertionMethod"] }],
+    "removeVerificationMethods": ["#key-0"]
+  }
+  ```
+
+  The Identity Service generates the key of each added verification method (Ed25519, `Ed25519VerificationKey2020`) in the wallet; no field takes key material. `id` defaults to the lowest unused `#key-<n>`, `purposes` to `["assertionMethod", "authentication"]` (allowed: `authentication`, `assertionMethod`, `capabilityInvocation`, `capabilityDelegation`). The response is the updated DID document.
+
+- `POST /dids/:did/deactivate` deactivates the DID and returns its document with `deactivated: true`. **Deactivation is irreversible.** Deactivating a deactivated DID returns `200` again, without a ledger write. The keys stay in the wallet, so AnonCreds credentials issued with the DID remain revocable.
+
+| Method         | Update | Deactivate | Notes                                                                                                                                                                                                                                                                           |
+| -------------- | ------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hedera`       | yes    | yes        | One HCS message per added or removed entry. The root key `#did-root-key` cannot be changed. A key referenced from a verification relationship cannot be removed (Hiero DID SDK 0.1.8 would leave a dangling reference), so only keys added with `"purposes": []` are removable. |
+| `indybesu`     | yes    | yes        | The document is replaced in one transaction, sent by the DID's own account (no endorser). The owner key `#KEY-1` cannot be changed. Service types are limited to `LinkedDomains`, `DIDCommMessaging`, `CredentialRegistry`, `OID4VCI` and `OID4VP`.                             |
+| `key`, `jwk`   | no     | no         | Immutable: `422`.                                                                                                                                                                                                                                                               |
+| `indy`, `peer` | no     | no         | Not implemented yet: `422`.                                                                                                                                                                                                                                                     |
+| `web`          | no     | no         | Not hosted by the Identity Service: `422`.                                                                                                                                                                                                                                      |
+
+`GET /dids/methods` reports the same per configured method in `capabilities` (`update`, `deactivate`, `controller`).
+
+Errors: `400` for an invalid body, `403` for the shared Indy endorser DID, `404` for a DID that is not the wallet's own, `409` for an update of a deactivated DID, `422` for an unsupported method or change (the key that controls the DID, an id that exists or does not), `503` while another request holds the wallet. A failed ledger write is `500` with the ledger's reason; on Hedera, entries written before the failure stay on the ledger, and the wallet's DID record follows the ledger.
+
+After deactivation the DID is no longer used by the Identity Service: `GET /dids?own=true` leaves it out (unless `includeDeactivated=true`, which lists it with `deactivated: true`), `POST /prepare-wallet` creates a new DID of the method, it is not the controller of new DIDs, and schema registrations and new OID4VC issuance offers or verification requests with it are rejected with `422`. `GET /dids/:did` returns it with `deactivated: true`. Its existing OID4VC issuer and verifier records are kept.
+
+On Hedera every message waits until it is visible on the mirror node, so an update with several operations can take minutes; allow for it in client and proxy timeouts. With several Identity Service instances, the other instances may serve the previous did:hedera document from their resolver cache for up to 5 minutes.
 
 ## Notifications
 
