@@ -902,6 +902,96 @@ describe('DidService', () => {
         expect(didRegistrarService.updateDid).not.toHaveBeenCalled()
       })
 
+      describe('private keys of removed verification methods', () => {
+        const keyBefore = [
+          { kmsKeyId: 'root-kms', didDocumentRelativeKeyId: '#did-root-key' },
+          { kmsKeyId: 'kms-1', didDocumentRelativeKeyId: '#key-1' },
+          { kmsKeyId: 'kms-2', didDocumentRelativeKeyId: '#key-2' },
+        ]
+        // The document after the update, as the registrar returns it and stores it in the DID record
+        const documentWithout = (...fragments: string[]) => {
+          const document = currentDocument()
+          document.verificationMethod = document.verificationMethod!.filter(
+            ({ id }) => !fragments.some((fragment) => id.endsWith(fragment)),
+          )
+          return document
+        }
+        const recordAfter = (didDocument: DidDocument, keys: typeof keyBefore) =>
+          new DidRecord({ did, role: DidDocumentRole.Created, didDocument, keys })
+
+        beforeEach(() => {
+          didRecord.keys = [...keyBefore]
+          Object.assign(tenantAgent, { kms: { deleteKey: vi.fn().mockResolvedValue(true) } })
+        })
+
+        test('are deleted from the KMS after a successful update; other keys stay', async () => {
+          const after = documentWithout('#key-1')
+          vi.mocked(didRegistrarService.updateDid).mockResolvedValue(after)
+          vi.mocked(tenantAgent.dids.getCreatedDids)
+            .mockResolvedValueOnce([didRecord])
+            .mockResolvedValueOnce([recordAfter(after, [keyBefore[0], keyBefore[2]])])
+
+          await didService.update(orgAdmin, tenantAgent, did, { removeVerificationMethods: ['#key-1'] })
+
+          expect(tenantAgent.kms.deleteKey).toHaveBeenCalledExactlyOnceWith({ keyId: 'kms-1' })
+        })
+
+        test('an update without removed verification methods deletes nothing', async () => {
+          await didService.update(orgAdmin, tenantAgent, did, { removeServices: ['#svc-1'] })
+
+          expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+        })
+
+        test.each([
+          ['the updated document still has the fragment', currentDocument(), [keyBefore[0], keyBefore[2]]],
+          ['the DID record still maps the key', documentWithout('#key-1'), keyBefore],
+          [
+            'the key also controls the DID',
+            documentWithout('#key-1'),
+            [keyBefore[0], { kmsKeyId: 'kms-1', didDocumentRelativeKeyId: '#did-root-key' }],
+          ],
+        ])('a key is kept when %s', async (_case, after, keysAfter) => {
+          vi.mocked(didRegistrarService.updateDid).mockResolvedValue(after)
+          vi.mocked(tenantAgent.dids.getCreatedDids)
+            .mockResolvedValueOnce([didRecord])
+            .mockResolvedValueOnce([recordAfter(after, keysAfter)])
+
+          await didService.update(orgAdmin, tenantAgent, did, { removeVerificationMethods: ['#key-1'] })
+
+          expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+        })
+
+        test('a failed update deletes nothing', async () => {
+          vi.mocked(didRegistrarService.updateDid).mockRejectedValue(
+            new InternalServerErrorException('DID document was not updated: timeout'),
+          )
+
+          await expect(
+            didService.update(orgAdmin, tenantAgent, did, { removeVerificationMethods: ['#key-1'] }),
+          ).rejects.toThrow(InternalServerErrorException)
+          expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+        })
+
+        test('a failed deletion does not fail the update and is logged without key ids', async () => {
+          const after = documentWithout('#key-1')
+          vi.mocked(didRegistrarService.updateDid).mockResolvedValue(after)
+          vi.mocked(tenantAgent.dids.getCreatedDids)
+            .mockResolvedValueOnce([didRecord])
+            .mockResolvedValueOnce([recordAfter(after, [keyBefore[0], keyBefore[2]])])
+          vi.mocked(tenantAgent.kms.deleteKey).mockRejectedValue(new Error('Key kms-1 could not be deleted'))
+          const childLogger = createMock<Logger>()
+          vi.mocked(logger.child).mockReturnValue(childLogger)
+
+          const result = await didService.update(orgAdmin, tenantAgent, did, { removeVerificationMethods: ['#key-1'] })
+
+          expect(result.id).toBe(did)
+          expect(childLogger.warn).toHaveBeenCalledWith(
+            'Could not delete 1 private key(s) of the removed verification methods',
+          )
+          expect(JSON.stringify(vi.mocked(childLogger.warn).mock.calls)).not.toContain('kms-1')
+        })
+      })
+
       test('a DID the wallet deactivated is not updated (409)', async () => {
         didRecord.setTag('hekaDeactivated', true)
 

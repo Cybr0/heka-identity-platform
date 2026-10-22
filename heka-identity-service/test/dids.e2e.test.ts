@@ -204,6 +204,22 @@ describe('E2E public DIDs creation', () => {
         })
     }
 
+    /** Whether the Administration wallet's KMS holds the key. */
+    const kmsHasKey = async (keyId: string) => {
+      const { tenantId } = await orm.em.fork().findOneOrFail(Wallet, { id: ADMINISTRATION })
+      return await nestApp
+        .get<string, Agent>(AGENT_TOKEN)
+        .modules.tenants.withTenantAgent({ tenantId }, (tenantAgent) =>
+          tenantAgent.kms.getPublicKey({ keyId }).then(
+            () => true,
+            () => false,
+          ),
+        )
+    }
+
+    const kmsKeyIdOf = async (did: string, fragment: string) =>
+      (await recordKeys(did)).find(({ didDocumentRelativeKeyId }) => didDocumentRelativeKeyId === fragment)!.kmsKeyId
+
     /** Creates the OID4VC issuer and verifier of a DID, as the wallet preparation does. */
     const createOid4VcRecords = async (token: string, did: string) => {
       const issuer = await request(app)
@@ -398,6 +414,8 @@ describe('E2E public DIDs creation', () => {
       )
 
       // AC3: a second consecutive update, checked against the ledger state of the first
+      const removedKmsKeyId = await kmsKeyIdOf(did, '#key-2')
+      const rootKmsKeyId = await kmsKeyIdOf(did, '#did-root-key')
       const removed = await DidUtilities.update(app, adminToken, did, {
         removeServices: ['#svc-1'],
         removeVerificationMethods: ['#key-2'],
@@ -410,6 +428,9 @@ describe('E2E public DIDs creation', () => {
       expect(ids(afterRemoval.verificationMethod)).toEqual([`${did}#did-root-key`, `${did}#key-1`])
       expect(ids(afterRemoval.assertionMethod)).toContain(`${did}#key-1`)
       expect(await recordKeys(did)).not.toContainEqual(expect.objectContaining({ didDocumentRelativeKeyId: '#key-2' }))
+      // The private key of the removed verification method is deleted; the root key stays
+      expect(await kmsHasKey(removedKmsKeyId)).toBe(false)
+      expect(await kmsHasKey(rootKmsKeyId)).toBe(true)
 
       await createOid4VcRecords(adminToken, did)
 
@@ -539,6 +560,7 @@ describe('E2E public DIDs creation', () => {
           expect.objectContaining({ didDocumentRelativeKeyId: '#key-2', kmsKeyId: expect.any(String) }),
         )
 
+        const removedKmsKeyId = await kmsKeyIdOf(did, '#key-2')
         fromBlock = await provider.getBlockNumber()
         expect(
           (await DidUtilities.update(app, adminToken, did, { removeVerificationMethods: ['#key-2'] })).status,
@@ -550,6 +572,8 @@ describe('E2E public DIDs creation', () => {
         expect(await recordKeys(did)).not.toContainEqual(
           expect.objectContaining({ didDocumentRelativeKeyId: '#key-2' }),
         )
+        expect(await kmsHasKey(removedKmsKeyId)).toBe(false)
+        expect(await kmsHasKey(await kmsKeyIdOf(did, '#KEY-1'))).toBe(true)
 
         // AC22: nothing is written
         const { versionId } = (await resolveFromLedger(did)).didDocumentMetadata

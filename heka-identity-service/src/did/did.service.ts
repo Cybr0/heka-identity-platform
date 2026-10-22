@@ -315,7 +315,9 @@ export class DidService {
         logger.info(
           `Updating DID: +${options.addServices.length}/-${options.removeServices.length} services, +${options.addVerificationMethods.length}/-${options.removeVerificationMethods.length} verification methods`,
         )
-        return new DidDocumentDto(await this.didRegistrarService.updateDid(tenantAgent, method, options))
+        const didDocument = await this.didRegistrarService.updateDid(tenantAgent, method, options)
+        await this.deleteRemovedKeys(tenantAgent, didRecord, didDocument, options, didRegistrar)
+        return new DidDocumentDto(didDocument)
       },
     )
 
@@ -416,6 +418,68 @@ export class DidService {
 
   private async documentOf(tenantAgent: TenantAgent, didRecord: DidRecord): Promise<DidDocument> {
     return didRecord.didDocument ?? (await tenantAgent.dids.resolveDidDocument(didRecord.did))
+  }
+
+  /**
+   * Deletes the private keys of the verification methods a successful update removed: a removed key is often one that
+   * is rotated or suspected compromised, and nothing can reach it any more. Only keys the wallet mapped to a removed
+   * fragment before the update are candidates, and a key is kept when it controls the DID, when the updated document
+   * still has its fragment, or when the DID record still maps it. A failure is logged (without key ids) and does not
+   * fail the request: the update itself succeeded.
+   */
+  private async deleteRemovedKeys(
+    tenantAgent: TenantAgent,
+    recordBefore: DidRecord,
+    didDocument: DidDocument,
+    options: UpdateDidOptions,
+    didRegistrar: DidRegistrar,
+  ): Promise<void> {
+    const removed = new Set(options.removeVerificationMethods)
+    if (!removed.size) {
+      return
+    }
+    const logger = this.logger.child('deleteRemovedKeys', { did: options.did })
+    const protectedFragment = didRegistrar.protectedKeyFragment?.toLowerCase()
+    const keysBefore = recordBefore.keys ?? []
+
+    let failed = 0
+    try {
+      const [recordAfter] = await tenantAgent.dids.getCreatedDids({ did: options.did })
+      if (!recordAfter) {
+        return
+      }
+      const inDocument = new Set(
+        [...(didDocument.verificationMethod ?? []), ...(recordAfter.didDocument?.verificationMethod ?? [])].map(
+          ({ id }) => fragmentOf(id).toLowerCase(),
+        ),
+      )
+      const stillMapped = new Set([
+        ...(recordAfter.keys ?? []).map(({ kmsKeyId }) => kmsKeyId),
+        ...keysBefore
+          .filter(({ didDocumentRelativeKeyId }) => !removed.has(fragmentOf(didDocumentRelativeKeyId)))
+          .map(({ kmsKeyId }) => kmsKeyId),
+      ])
+      const deletable = keysBefore.filter(({ didDocumentRelativeKeyId, kmsKeyId }) => {
+        const fragment = fragmentOf(didDocumentRelativeKeyId)
+        return (
+          removed.has(fragment) &&
+          fragment.toLowerCase() !== protectedFragment &&
+          !inDocument.has(fragment.toLowerCase()) &&
+          !stillMapped.has(kmsKeyId)
+        )
+      })
+      for (const keyId of new Set(deletable.map(({ kmsKeyId }) => kmsKeyId))) {
+        await tenantAgent.kms.deleteKey({ keyId }).catch(() => {
+          failed++
+        })
+      }
+    } catch {
+      logger.warn('Could not delete the private keys of the removed verification methods')
+      return
+    }
+    if (failed) {
+      logger.warn(`Could not delete ${failed} private key(s) of the removed verification methods`)
+    }
   }
 
   private async markDeactivated(tenantAgent: TenantAgent, didRecord: DidRecord): Promise<void> {
