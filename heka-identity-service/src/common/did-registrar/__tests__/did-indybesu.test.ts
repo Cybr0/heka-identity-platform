@@ -174,6 +174,7 @@ describe('did:indybesu registrar wrapper', () => {
     beforeEach(() => {
       generatedKeys = 0
       tenantAgent = {
+        config: { logger: { warn: vi.fn() } },
         kms: {
           createKey: vi.fn(() => {
             generatedKeys++
@@ -269,12 +270,14 @@ describe('did:indybesu registrar wrapper', () => {
       expect(tenantAgent.dids.update).not.toHaveBeenCalled()
     })
 
-    test('deletes the generated keys when the update fails', async () => {
-      vi.mocked(tenantAgent.dids.update).mockResolvedValue({
-        didState: { state: 'failed', reason: 'Ledger Client: Transaction reverted' },
-        didDocumentMetadata: {},
-        didRegistrationMetadata: {},
-      })
+    const failedUpdate = (didRegistrationMetadata: Record<string, unknown>) => ({
+      didState: { state: 'failed' as const, reason: 'Ledger Client: Transaction reverted' },
+      didDocumentMetadata: {},
+      didRegistrationMetadata,
+    })
+
+    test('deletes the generated keys when the registrar sent nothing to the ledger', async () => {
+      vi.mocked(tenantAgent.dids.update).mockResolvedValue(failedUpdate({ transactionSubmitted: false }))
 
       const result = await registrar.updateDid(
         tenantAgent,
@@ -282,7 +285,61 @@ describe('did:indybesu registrar wrapper', () => {
       )
 
       expect(result.didState.state).toBe('failed')
-      expect(tenantAgent.kms.deleteKey).toHaveBeenCalledWith({ keyId: 'kms-1' })
+      expect(tenantAgent.kms.deleteKey).toHaveBeenCalledExactlyOnceWith({ keyId: 'kms-1' })
+      expect(tenantAgent.config.logger.warn).not.toHaveBeenCalled()
+    })
+
+    test.each([
+      ['the transaction was sent', { transactionSubmitted: true }],
+      ['the registrar does not say whether it sent anything', {}],
+    ])('keeps the generated keys when %s (it may still be mined)', async (_case, didRegistrationMetadata) => {
+      vi.mocked(tenantAgent.dids.update).mockResolvedValue(failedUpdate(didRegistrationMetadata))
+
+      const result = await registrar.updateDid(
+        tenantAgent,
+        options({ addVerificationMethods: [{ id: '#key-2', purposes: [] }] }),
+      )
+
+      expect(result.didState.state).toBe('failed')
+      expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+      const [warning] = vi.mocked(tenantAgent.config.logger.warn).mock.calls[0]
+      expect(warning).toContain('1 new key(s) are kept')
+      expect(warning).not.toContain('kms-1')
+    })
+
+    test('keeps the generated keys when the registrar throws', async () => {
+      vi.mocked(tenantAgent.dids.update).mockRejectedValue(new Error('storage down'))
+
+      const result = await registrar.updateDid(
+        tenantAgent,
+        options({ addVerificationMethods: [{ id: '#key-2', purposes: [] }] }),
+      )
+
+      expect(result.didState).toEqual({ state: 'failed', reason: 'Unable to update DID: storage down' })
+      expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+    })
+
+    test('deletes the generated keys when the KMS fails before anything is sent', async () => {
+      vi.mocked(tenantAgent.kms.createKey)
+        .mockResolvedValueOnce({
+          keyId: 'kms-1',
+          publicJwk: { kty: 'OKP', crv: 'Ed25519', x: TypedArrayEncoder.toBase64Url(new Uint8Array(32).fill(1)) },
+        } as never)
+        .mockRejectedValueOnce(new Error('storage unavailable'))
+
+      const result = await registrar.updateDid(
+        tenantAgent,
+        options({
+          addVerificationMethods: [
+            { id: '#key-2', purposes: [] },
+            { id: '#key-3', purposes: [] },
+          ],
+        }),
+      )
+
+      expect(result.didState.state).toBe('failed')
+      expect(tenantAgent.dids.update).not.toHaveBeenCalled()
+      expect(tenantAgent.kms.deleteKey).toHaveBeenCalledExactlyOnceWith({ keyId: 'kms-1' })
     })
   })
 })

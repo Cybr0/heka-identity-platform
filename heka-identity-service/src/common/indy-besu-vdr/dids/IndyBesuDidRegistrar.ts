@@ -17,7 +17,7 @@ import {
   Kms,
 } from '@credo-ts/core'
 
-import { DidRegistry, IndyBesuSigner } from '../ledger'
+import { DidRegistry, IndyBesuSigner, TransactionOutcomeUnknownError } from '../ledger'
 
 import { fromIndyBesuDidDocument, toIndyBesuDidDocument } from './DidTypesMapping'
 import { buildDid } from './DidUtils'
@@ -76,8 +76,11 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
         },
       }
     } catch (error) {
-      // Once the DID is on the ledger its key is the only one that can change it, so it is kept
-      if (!writtenToLedger) {
+      // Once the DID is on the ledger its key is the only one that can change it, so it is kept. That includes a
+      // transaction that was sent but not confirmed: it may still be mined
+      if (error instanceof TransactionOutcomeUnknownError) {
+        agentContext.config.logger.warn('did:indybesu creation failed after its transaction was sent; its key is kept')
+      } else if (!writtenToLedger) {
         await kms.deleteKey({ keyId: key.keyId }).catch(() => undefined)
       }
       return {
@@ -94,7 +97,8 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
   /**
    * Replaces the DID document on the ledger, sent by the DID's own account (`updateDid`, no endorser). The owner key must
    * stay the first verification method, unchanged: it is the DID's address and the only key the ledger accepts. The new
-   * keys in `secret.keys` belong to the caller, which deletes them when the update fails.
+   * keys in `secret.keys` belong to the caller. A failed result tells it whether it may delete them: see
+   * `isNothingSubmitted`.
    */
   public async update(agentContext: AgentContext, options: IndyBesuDidUpdateOptions): Promise<DidUpdateResult> {
     const didRegistry = agentContext.dependencyManager.resolve(DidRegistry)
@@ -105,17 +109,17 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
     // The type allows only `setDidDocument`, but the options come through Credo's generic `DidsApi.update`
     const operation: string | undefined = options.didDocumentOperation
     if (operation && operation !== 'setDidDocument') {
-      return failedResult(`did:indybesu replaces the whole document; '${operation}' is not supported`)
+      return failedResult(`did:indybesu replaces the whole document; '${operation}' is not supported`, NOT_SUBMITTED)
     }
     if (!(options.didDocument instanceof DidDocument) || options.didDocument.id !== did) {
-      return failedResult('The new DID document must be a DidDocument of the DID')
+      return failedResult('The new DID document must be a DidDocument of the DID', NOT_SUBMITTED)
     }
     const didDocument = options.didDocument
 
     const didRecord = await didRepository.findCreatedDid(agentContext, did)
     const ownerKey = didRecord && findOwnerKey(didRecord.keys)
     if (!didRecord || !ownerKey) {
-      return failedResult('DID not found in this wallet')
+      return failedResult('DID not found in this wallet', NOT_SUBMITTED)
     }
 
     const ledgerDocument = toIndyBesuDidDocument(didDocument)
@@ -129,7 +133,10 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
         currentOwner.id !== newOwner.id ||
         currentOwner.publicKeyBase58 !== newOwner.publicKeyBase58
       ) {
-        return failedResult(`The owner key ${OWNER_KEY_FRAGMENT} must stay the first verification method, unchanged`)
+        return failedResult(
+          `The owner key ${OWNER_KEY_FRAGMENT} must stay the first verification method, unchanged`,
+          NOT_SUBMITTED,
+        )
       }
 
       await didRegistry.updateDid(ledgerDocument, await IndyBesuSigner.create(agentContext, ownerKey.kmsKeyId))
@@ -140,7 +147,10 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
         .then(({ document }) => canonicalJson(document) === canonicalJson(ledgerDocument))
         .catch(() => false)
       if (!written) {
-        return failedResult(errorReason(error))
+        // Only a failure once the transaction was sent leaves the outcome open (it may still be mined)
+        return failedResult(errorReason(error), {
+          transactionSubmitted: error instanceof TransactionOutcomeUnknownError,
+        })
       }
     }
 
@@ -266,10 +276,23 @@ function errorReason(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function failedResult(reason: string): DidUpdateResult & DidDeactivateResult {
+const NOT_SUBMITTED = { transactionSubmitted: false }
+
+/**
+ * Whether a failed `update` certainly sent nothing to the ledger, so that the keys created for it can be deleted. Any
+ * other failure (including one that does not say) may still be mined.
+ */
+export function isNothingSubmitted(result: DidUpdateResult): boolean {
+  return result.didRegistrationMetadata.transactionSubmitted === false
+}
+
+function failedResult(
+  reason: string,
+  didRegistrationMetadata: Record<string, unknown> = {},
+): DidUpdateResult & DidDeactivateResult {
   return {
     didDocumentMetadata: {},
-    didRegistrationMetadata: {},
+    didRegistrationMetadata,
     didState: { state: 'failed', reason },
   }
 }

@@ -78,6 +78,7 @@ describe('DidHederaRegistrar', () => {
     didRepository = { findCreatedDid: vi.fn().mockResolvedValue(didRecord), update: vi.fn() }
     tenantAgent = {
       context: {},
+      config: { logger: { warn: vi.fn() } },
       kms: {
         createKey: vi.fn(() => {
           generatedKeys++
@@ -206,7 +207,7 @@ describe('DidHederaRegistrar', () => {
     expect(operations).not.toContain('setDidDocument')
   })
 
-  test('a failed update re-syncs the DID record from the ledger and deletes the keys that did not land', async () => {
+  test('a failed update re-syncs the DID record from the ledger and keeps every key it may have sent', async () => {
     vi.mocked(tenantAgent.dids.update).mockResolvedValue(failed('Unable update DID: timeout'))
     // Only the first of the two new keys made it to the ledger
     const onLedger = currentDocument()
@@ -234,14 +235,67 @@ describe('DidHederaRegistrar', () => {
     // The removal is not attempted after the addition failed
     expect(tenantAgent.dids.update).toHaveBeenCalledTimes(1)
     expect(tenantAgent.dids.resolve).toHaveBeenCalledWith(did, { useCache: false, useLocalCreatedDidRecord: false })
-    expect(tenantAgent.kms.deleteKey).toHaveBeenCalledTimes(1)
-    expect(tenantAgent.kms.deleteKey).toHaveBeenCalledWith({ keyId: 'kms-2' })
+    // `#key-3` may still land (its message may have been sent before the failure): its key is kept, not mapped
+    expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
     expect(didRecord.didDocument).toBe(onLedger)
     expect(didRecord.keys).toEqual([
       { kmsKeyId: 'root-kms', didDocumentRelativeKeyId: '#did-root-key' },
       { kmsKeyId: 'kms-1', didDocumentRelativeKeyId: '#key-2' },
     ])
     expect(didRepository.update).toHaveBeenCalledWith(tenantAgent.context, didRecord)
+    const [warning] = vi.mocked(tenantAgent.config.logger.warn).mock.calls[0]
+    expect(warning).toContain('1 new key(s)')
+    expect(warning).not.toMatch(/kms-\d/)
+  })
+
+  test('a failure of the removal after a finished addition keeps the added keys mapped', async () => {
+    const afterAddition = currentDocument()
+    afterAddition.verificationMethod!.push(
+      new VerificationMethod({ id: `${did}#key-2`, type: 'Ed25519VerificationKey2020', controller: did }),
+    )
+    vi.mocked(tenantAgent.dids.update)
+      .mockResolvedValueOnce(finished(afterAddition))
+      .mockRejectedValueOnce(new Error('consensus timeout'))
+    vi.mocked(tenantAgent.dids.resolve).mockResolvedValue({
+      didDocument: afterAddition,
+      didDocumentMetadata: {},
+      didResolutionMetadata: {},
+    })
+
+    const result = await registrar.updateDid(
+      tenantAgent,
+      options({ addVerificationMethods: [{ id: '#key-2', purposes: [] }], removeServices: ['#svc-1'] }),
+    )
+
+    expect(result.didState).toEqual({ state: 'failed', reason: 'Unable to update DID: consensus timeout' })
+    expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+    expect(didRecord.keys).toContainEqual({ kmsKeyId: 'kms-1', didDocumentRelativeKeyId: '#key-2' })
+    expect(tenantAgent.config.logger.warn).not.toHaveBeenCalled()
+  })
+
+  test('deletes the new keys when the failure came before anything was sent', async () => {
+    vi.mocked(tenantAgent.kms.createKey)
+      .mockResolvedValueOnce({
+        keyId: 'kms-1',
+        publicJwk: { kty: 'OKP', crv: 'Ed25519', x: TypedArrayEncoder.toBase64Url(new Uint8Array(32).fill(1)) },
+      } as never)
+      .mockRejectedValueOnce(new Kms.KeyManagementError('storage unavailable'))
+
+    const result = await registrar.updateDid(
+      tenantAgent,
+      options({
+        addVerificationMethods: [
+          { id: '#key-2', purposes: [] },
+          { id: '#key-3', purposes: [] },
+        ],
+      }),
+    )
+
+    expect(result.didState.state).toBe('failed')
+    expect(tenantAgent.dids.update).not.toHaveBeenCalled()
+    expect(tenantAgent.kms.deleteKey).toHaveBeenCalledExactlyOnceWith({ keyId: 'kms-1' })
+    expect(tenantAgent.dids.resolve).not.toHaveBeenCalled()
+    expect(didRepository.update).not.toHaveBeenCalled()
   })
 
   test('keeps every key when the ledger state is unknown after a failure', async () => {
@@ -256,6 +310,7 @@ describe('DidHederaRegistrar', () => {
     expect(result.didState).toEqual({ state: 'failed', reason: 'Unable to update DID: network down' })
     expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
     expect(didRepository.update).not.toHaveBeenCalled()
+    expect(tenantAgent.config.logger.warn).toHaveBeenCalledOnce()
   })
 
   test('a failing clean-up does not hide why the update failed', async () => {

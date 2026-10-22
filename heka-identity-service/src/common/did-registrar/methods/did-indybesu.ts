@@ -8,7 +8,7 @@ import { SigningKey } from 'ethers'
 
 import AgentConfig from '../../../config/agent'
 import { TenantAgent } from '../../agent'
-import { IndyBesuDidCreateOptions, IndyBesuDidUpdateOptions } from '../../indy-besu-vdr'
+import { IndyBesuDidCreateOptions, IndyBesuDidUpdateOptions, isNothingSubmitted } from '../../indy-besu-vdr'
 import {
   CreateDidOptions,
   DidRegistrar,
@@ -134,6 +134,8 @@ export class DidIndyBesuRegistrar implements DidRegistrar {
     }
 
     const createdKeys: DidDocumentKey[] = []
+    // Set once the update is handed to the registrar: from then on a transaction may have been sent
+    let submitting = false
     try {
       const json = JsonTransformer.toJSON(currentDidDocument) as DidDocumentJson
       const entryId = (entry: RelationshipEntry) => (typeof entry === 'string' ? entry : entry.id)
@@ -179,6 +181,7 @@ export class DidIndyBesuRegistrar implements DidRegistrar {
       }
 
       // `setDidDocument` is the ledger's own semantics here (unlike did:hedera)
+      submitting = true
       const result = await tenantAgent.dids.update<IndyBesuDidUpdateOptions>({
         did,
         didDocumentOperation: 'setDidDocument',
@@ -186,11 +189,11 @@ export class DidIndyBesuRegistrar implements DidRegistrar {
         secret: { keys: createdKeys },
       })
       if (result.didState.state !== 'finished') {
-        await deleteKeys(tenantAgent, createdKeys)
+        await releaseKeys(tenantAgent, createdKeys, isNothingSubmitted(result))
       }
       return result
     } catch (error) {
-      await deleteKeys(tenantAgent, createdKeys)
+      await releaseKeys(tenantAgent, createdKeys, !submitting)
       return {
         didDocumentMetadata: {},
         didRegistrationMetadata: {},
@@ -205,7 +208,22 @@ export class DidIndyBesuRegistrar implements DidRegistrar {
   }
 }
 
-async function deleteKeys(tenantAgent: TenantAgent, keys: DidDocumentKey[]): Promise<void> {
+/**
+ * The keys created for a failed update are deleted only when nothing was sent to the ledger. A transaction that was sent
+ * but not confirmed (receipt error or timeout) may still be mined: had its keys been deleted, the document would hold
+ * verification methods without a private key. Such keys stay in the KMS (an unused key is harmless); the registrar has
+ * already mapped them into the DID record if the ledger showed the new document. A warning without key ids is logged.
+ */
+async function releaseKeys(tenantAgent: TenantAgent, keys: DidDocumentKey[], nothingSubmitted: boolean): Promise<void> {
+  if (!keys.length) {
+    return
+  }
+  if (!nothingSubmitted) {
+    tenantAgent.config.logger.warn(
+      `did:indybesu update failed after its transaction may have been sent; ${keys.length} new key(s) are kept in the wallet`,
+    )
+    return
+  }
   for (const key of keys) {
     await tenantAgent.kms.deleteKey({ keyId: key.kmsKeyId }).catch(() => undefined)
   }

@@ -50,6 +50,8 @@ export class DidHederaRegistrar implements DidRegistrar {
     const { did, currentDidDocument } = options
     assertRemovableVerificationMethods(currentDidDocument, options.removeVerificationMethods)
     const createdKeys: DidDocumentKey[] = []
+    // Set once an update is handed to Credo: from then on HCS messages may have been sent
+    let submitted = false
 
     try {
       let result: DidUpdateResult | undefined
@@ -82,6 +84,7 @@ export class DidHederaRegistrar implements DidRegistrar {
           ]),
         )
 
+        submitted = true
         result = await tenantAgent.dids.update<HederaDidUpdateOptions>({
           did,
           didDocumentOperation: 'addToDidDocument',
@@ -94,7 +97,7 @@ export class DidHederaRegistrar implements DidRegistrar {
           secret: { keys: createdKeys },
         })
         if (result.didState.state !== 'finished') {
-          await this.resyncDidRecord(tenantAgent, did, createdKeys)
+          await this.afterFailedUpdate(tenantAgent, did, createdKeys, submitted)
           return result
         }
       }
@@ -105,6 +108,7 @@ export class DidHederaRegistrar implements DidRegistrar {
         const refersToRemovedKey = (entry: string | VerificationMethod) =>
           removedKeys.has(fragmentOf(typeof entry === 'string' ? entry : entry.id))
 
+        submitted = true
         result = await tenantAgent.dids.update<HederaDidUpdateOptions>({
           did,
           didDocumentOperation: 'removeFromDidDocument',
@@ -123,14 +127,14 @@ export class DidHederaRegistrar implements DidRegistrar {
           }),
         })
         if (result.didState.state !== 'finished') {
-          await this.resyncDidRecord(tenantAgent, did, createdKeys)
+          await this.afterFailedUpdate(tenantAgent, did, createdKeys, submitted)
           return result
         }
       }
 
       return result!
     } catch (error) {
-      await this.resyncDidRecord(tenantAgent, did, createdKeys)
+      await this.afterFailedUpdate(tenantAgent, did, createdKeys, submitted)
       return {
         didDocumentMetadata: {},
         didRegistrationMetadata: {},
@@ -149,40 +153,61 @@ export class DidHederaRegistrar implements DidRegistrar {
   }
 
   /**
-   * After a failed update the ledger may hold part of it (one HCS message per entry), while Credo left the DID record
-   * unchanged. The record takes the document on the ledger, with the generated keys that made it there; the others are
-   * deleted.
+   * Clean-up after a failed update. The new keys are deleted only when nothing was sent to the ledger (the failure came
+   * from the KMS, before any update was handed to Credo).
+   *
+   * Otherwise the outcome is unknown: the SDK sends one HCS message per entry and waits for the mirror node only after
+   * the last one, so messages sent before a failure land on the ledger although the mirror node does not show them yet.
+   * Deleting their keys would leave verification methods without a private key. So every new key is kept in the KMS
+   * (an unused key is harmless). The DID record takes the document the ledger shows now, with the keys it already shows
+   * mapped; keys not visible yet stay in the KMS without a mapping, and a warning (without key ids) is logged.
    */
-  private async resyncDidRecord(tenantAgent: TenantAgent, did: string, createdKeys: DidDocumentKey[]): Promise<void> {
+  private async afterFailedUpdate(
+    tenantAgent: TenantAgent,
+    did: string,
+    createdKeys: DidDocumentKey[],
+    submitted: boolean,
+  ): Promise<void> {
+    if (!submitted) {
+      for (const key of createdKeys) {
+        await tenantAgent.kms.deleteKey({ keyId: key.kmsKeyId }).catch(() => undefined)
+      }
+      return
+    }
     // The failure of the update is what the caller gets to see, not a failure of this clean-up
-    await this.syncDidRecordFromLedger(tenantAgent, did, createdKeys).catch(() => undefined)
+    const notVisible = await this.syncDidRecordFromLedger(tenantAgent, did, createdKeys).catch(() => createdKeys.length)
+    if (notVisible > 0) {
+      // Key ids are not logged
+      tenantAgent.config.logger.warn(
+        `did:hedera update failed after messages were sent; ${notVisible} new key(s) not visible on the ledger yet are kept in the wallet`,
+      )
+    }
   }
 
+  /** Returns how many of the new keys the ledger does not show. */
   private async syncDidRecordFromLedger(
     tenantAgent: TenantAgent,
     did: string,
     createdKeys: DidDocumentKey[],
-  ): Promise<void> {
+  ): Promise<number> {
     const { didDocument } = await tenantAgent.dids
       .resolve(did, { useCache: false, useLocalCreatedDidRecord: false })
       .catch(() => ({ didDocument: null }))
-    // Without the ledger state it is unknown which keys are in use, so all are kept
+    // Without the ledger state the record is left as it is
     if (!didDocument) {
-      return
+      return createdKeys.length
     }
 
     const isOnLedger = (key: DidDocumentKey) =>
       (didDocument.verificationMethod ?? []).some((verificationMethod) =>
         verificationMethod.id.endsWith(key.didDocumentRelativeKeyId),
       )
-    for (const key of createdKeys.filter((key) => !isOnLedger(key))) {
-      await tenantAgent.kms.deleteKey({ keyId: key.kmsKeyId }).catch(() => undefined)
-    }
+    const notVisible = createdKeys.filter((key) => !isOnLedger(key)).length
 
     const didRepository = tenantAgent.dependencyManager.resolve(DidRepository)
     const didRecord = await didRepository.findCreatedDid(tenantAgent.context, did)
     if (!didRecord) {
-      return
+      return notVisible
     }
     const keys = didRecord.keys ?? []
     didRecord.didDocument = didDocument
@@ -193,6 +218,7 @@ export class DidHederaRegistrar implements DidRegistrar {
       ),
     ]
     await didRepository.update(tenantAgent.context, didRecord)
+    return notVisible
   }
 }
 

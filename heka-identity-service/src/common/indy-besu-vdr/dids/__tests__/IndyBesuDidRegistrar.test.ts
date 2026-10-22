@@ -12,9 +12,9 @@ import {
 } from '@credo-ts/core'
 import { getBytes, SigningKey } from 'ethers'
 
-import { DidRegistry, IndyBesuSigner } from '../../ledger'
+import { DidRegistry, IndyBesuSigner, TransactionOutcomeUnknownError } from '../../ledger'
 import { toIndyBesuDidDocument } from '../DidTypesMapping'
-import { IndyBesuDidRegistrar } from '../IndyBesuDidRegistrar'
+import { IndyBesuDidRegistrar, isNothingSubmitted } from '../IndyBesuDidRegistrar'
 
 const OWNER_PRIVATE_KEY = '4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318'
 const OWNER_ADDRESS = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23'
@@ -43,7 +43,9 @@ function registrarContext() {
     deleteKey: vi.fn().mockResolvedValue(true),
   }
   const didRepository = { findCreatedDid: vi.fn(), update: vi.fn() }
+  const logger = { warn: vi.fn() }
   const agentContext = {
+    config: { logger },
     dependencyManager: {
       resolve: vi.fn((token: unknown) => {
         if (token === DidRegistry) return didRegistry
@@ -53,7 +55,7 @@ function registrarContext() {
       }),
     },
   } as unknown as AgentContext
-  return { agentContext, didRegistry, didsApi, kms, didRepository }
+  return { agentContext, didRegistry, didsApi, kms, didRepository, logger }
 }
 
 describe('IndyBesuDidRegistrar', () => {
@@ -119,6 +121,17 @@ describe('IndyBesuDidRegistrar', () => {
       })
       expect(context.kms.deleteKey).toHaveBeenCalledWith({ keyId: 'owner-key' })
       expect(context.didsApi.import).not.toHaveBeenCalled()
+    })
+
+    test('keeps the generated key when the transaction was sent but not confirmed (it may still be mined)', async () => {
+      context.didRegistry.endorseDid.mockRejectedValue(new TransactionOutcomeUnknownError(new Error('receipt timeout')))
+
+      const result = await registrar.create(context.agentContext, createOptions)
+
+      expect(result.didState).toEqual({ state: 'failed', reason: 'unknownError: receipt timeout' })
+      expect(context.kms.deleteKey).not.toHaveBeenCalled()
+      expect(context.logger.warn).toHaveBeenCalledOnce()
+      expect(JSON.stringify(context.logger.warn.mock.calls)).not.toContain('owner-key')
     })
 
     test('keeps the key of a DID that is already on the ledger', async () => {
@@ -205,7 +218,9 @@ describe('IndyBesuDidRegistrar', () => {
     })
 
     test('update: a failed write with the ledger unchanged fails and keeps the record and the new keys', async () => {
-      context.didRegistry.updateDid.mockRejectedValue(new Error('Ledger Client: Transaction reverted: 0xe9aeaecd'))
+      context.didRegistry.updateDid.mockRejectedValue(
+        new TransactionOutcomeUnknownError(new Error('Ledger Client: Transaction reverted: 0xe9aeaecd')),
+      )
 
       const result = await registrar.update(context.agentContext, {
         did: DID,
@@ -214,9 +229,25 @@ describe('IndyBesuDidRegistrar', () => {
       })
 
       expect(result.didState).toEqual({ state: 'failed', reason: 'Ledger Client: Transaction reverted: 0xe9aeaecd' })
+      // The transaction was sent: the caller must not delete the new keys
+      expect(isNothingSubmitted(result)).toBe(false)
       expect(context.kms.deleteKey).not.toHaveBeenCalled()
       expect(context.didRepository.update).not.toHaveBeenCalled()
       expect(didRecord.didDocument?.service).toBeUndefined()
+    })
+
+    test('update: a failure before the transaction is sent says that nothing was submitted', async () => {
+      // e.g. building or signing the transaction
+      context.didRegistry.updateDid.mockRejectedValue(new Error('nonce unavailable'))
+
+      const result = await registrar.update(context.agentContext, {
+        did: DID,
+        didDocument: newDocument(),
+        secret: { keys: newKeys },
+      })
+
+      expect(result.didState).toEqual({ state: 'failed', reason: 'nonce unavailable' })
+      expect(isNothingSubmitted(result)).toBe(true)
     })
 
     test('update: a KMS error is reported without the KMS key id', async () => {
@@ -226,6 +257,7 @@ describe('IndyBesuDidRegistrar', () => {
 
       expect(result.didState).toEqual({ state: 'failed', reason: 'A key of the DID is not available in the wallet' })
       expect(JSON.stringify(result)).not.toContain('owner-key')
+      expect(isNothingSubmitted(result)).toBe(true)
     })
 
     test('update: a failed wait for a write that made it to the ledger counts as written', async () => {
@@ -260,6 +292,7 @@ describe('IndyBesuDidRegistrar', () => {
       })
 
       expect(result.didState).toMatchObject({ state: 'failed', reason: expect.stringContaining('#KEY-1') })
+      expect(isNothingSubmitted(result)).toBe(true)
       expect(context.didRegistry.updateDid).not.toHaveBeenCalled()
       expect(context.kms.deleteKey).not.toHaveBeenCalled()
     })
