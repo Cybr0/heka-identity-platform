@@ -175,7 +175,7 @@ export class DidIndyBesuRegistrar implements DidRegistrar {
       if (options.addVerificationMethods.length) {
         const context = json['@context'] ?? []
         const contexts = Array.isArray(context) ? context : [context]
-        if (!contexts.includes(ED25519_2020_CONTEXT)) {
+        if (!contexts.some((entry) => entry === ED25519_2020_CONTEXT)) {
           json['@context'] = [...contexts, ED25519_2020_CONTEXT]
         }
       }
