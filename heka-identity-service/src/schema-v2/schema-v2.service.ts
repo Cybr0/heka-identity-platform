@@ -658,7 +658,8 @@ export class SchemaV2Service {
       throw new BadRequestException(`Schema is already registered here`)
     }
 
-    // A deactivated DID registers nothing new (on Indy-Besu the ledger would reject it with a less clear error)
+    // A deactivated DID registers nothing new (on Indy-Besu the ledger would reject it with a less clear error). Checked
+    // here for every protocol; AnoncredsRegistryService repeats the check for the AnonCreds writes of the v1 routes.
     await assertDidNotDeactivated(tenantAgent, request.did)
 
     let schemaRegistration: SchemaRegistration

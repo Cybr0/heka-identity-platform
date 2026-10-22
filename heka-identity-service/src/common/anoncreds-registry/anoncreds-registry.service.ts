@@ -16,6 +16,8 @@ import { ConfigType } from '@nestjs/config'
 import { TenantAgent } from 'common/agent'
 import AgentConfig from 'config/agent'
 
+import { assertDidNotDeactivated } from '../did-registrar/did-deactivation'
+
 import { AnoncredsRegistry, CredentialDefinition, Schema } from './anoncreds-registry.types'
 import { AnoncredsHederaRegistrar, AnoncredsIndyBesuRegistrar, AnoncredsIndyRegistrar } from './methods'
 
@@ -89,7 +91,11 @@ export class AnoncredsRegistryService {
     schema: AnonCredsSchema
     schemaId: string
   }> {
-    const createSchemaResult = await this.getAnoncredsRegistry(schema.issuerId).registerSchema(tenantAgent, schema)
+    const registry = this.getAnoncredsRegistry(schema.issuerId)
+    // A deactivated DID registers nothing new. This is the shared path of POST /schemas and the schema-v2 Aries
+    // registration; revocation registries stay allowed for credentials issued before the deactivation.
+    await assertDidNotDeactivated(tenantAgent, schema.issuerId)
+    const createSchemaResult = await registry.registerSchema(tenantAgent, schema)
 
     const { schemaState } = createSchemaResult
 
@@ -153,10 +159,10 @@ export class AnoncredsRegistryService {
     credentialDefinition: AnonCredsCredentialDefinition
     credentialDefinitionId: string
   }> {
-    const registrationResult = await this.getAnoncredsRegistry(credDef.issuerId).registerCredentialDefinition(
-      tenantAgent,
-      credDef,
-    )
+    const registry = this.getAnoncredsRegistry(credDef.issuerId)
+    // Shared path of POST /credential-definitions and the schema-v2 Aries registration (see registerSchema)
+    await assertDidNotDeactivated(tenantAgent, credDef.issuerId)
+    const registrationResult = await registry.registerCredentialDefinition(tenantAgent, credDef)
     const registrationState = registrationResult.credentialDefinitionState
     if (registrationState.state !== 'finished') {
       throw new InternalServerErrorException(

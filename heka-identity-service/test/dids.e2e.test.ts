@@ -434,6 +434,13 @@ describe('E2E public DIDs creation', () => {
         .send({ protocol: 'Aries', credentialFormat: 'anoncreds', network: 'hedera', did })
       expect(registration.status).toBe(422)
       expect(registration.body.message).toContain('DID is deactivated')
+      // Neither through the v1 route, which takes the issuer from the body
+      const legacySchema = await request(app)
+        .post('/schemas')
+        .auth(adminToken, { type: 'bearer' })
+        .send({ issuerId: did, name: 'Diploma', version: '1.0', attrNames: ['name'] })
+      expect(legacySchema.status).toBe(422)
+      expect(legacySchema.body.message).toContain('DID is deactivated')
 
       // AC11
       expect(
