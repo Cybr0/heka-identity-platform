@@ -189,11 +189,6 @@ export class DidService {
     return oldest?.did
   }
 
-  /** Whether `did` is a DID of the tenant's wallet that the wallet deactivated. */
-  public async isOwnDidDeactivated(tenantAgent: TenantAgent, did: string): Promise<boolean> {
-    return await isOwnDidDeactivated(tenantAgent, did)
-  }
-
   private async runExclusiveForWallet<T>(walletId: string, operation: () => Promise<T>): Promise<T> {
     let mutex = this.mainDidMutexes.get(walletId)
     if (!mutex) {

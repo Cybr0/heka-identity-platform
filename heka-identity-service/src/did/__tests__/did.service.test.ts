@@ -693,7 +693,6 @@ describe('DidService', () => {
       ])
 
       expect(await didService.findOwnDid(tenantAgent, 'hedera')).toBe('did:hedera:active')
-      expect(await didService.isOwnDidDeactivated(tenantAgent, 'did:hedera:retired')).toBe(true)
     })
 
     test('is undefined when the wallet has no DID of the method', async () => {
