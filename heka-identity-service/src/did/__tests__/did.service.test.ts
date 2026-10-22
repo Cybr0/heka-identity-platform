@@ -1224,9 +1224,15 @@ describe('DidService', () => {
           .mockResolvedValueOnce(ledgerResolution())
           .mockResolvedValueOnce(ledgerResolution({ deactivated: true }))
         didRepository.update.mockRejectedValue(new Error('storage unavailable'))
+        const childLogger = createMock<Logger>()
+        vi.mocked(logger.child).mockReturnValue(childLogger)
 
         await expect(didService.deactivate(orgAdmin, tenantAgent, did)).rejects.toThrow(
           'DID document was not deactivated: timeout',
+        )
+        expect(logger.child).toHaveBeenCalledWith('reconcileFailedDeactivation', { did })
+        expect(childLogger.warn).toHaveBeenCalledWith(
+          'Could not reconcile the failed deactivation: storage unavailable',
         )
       })
     })

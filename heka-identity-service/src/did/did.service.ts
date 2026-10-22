@@ -455,7 +455,13 @@ export class DidService {
       const [currentRecord] = await tenantAgent.dids.getCreatedDids({ did: didRecord.did })
       await this.markDeactivated(tenantAgent, currentRecord ?? didRecord)
       return resolution.didDocument ?? (await this.documentOf(tenantAgent, currentRecord ?? didRecord))
-    } catch {
+    } catch (error) {
+      // Only a ledger read and the record's storage are involved here, so the message carries no key material
+      this.logger
+        .child('reconcileFailedDeactivation', { did: didRecord.did })
+        .warn(
+          `Could not reconcile the failed deactivation: ${error instanceof Error ? error.message : 'unknown error'}`,
+        )
       return undefined
     }
   }

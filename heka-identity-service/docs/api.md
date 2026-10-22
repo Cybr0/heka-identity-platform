@@ -29,7 +29,7 @@ Endpoints are grouped by domain:
 
 A wallet can change or retire the DIDs it created (`POST /dids`), because it holds their keys. The routes are open to the Admin, OrgAdmin and Issuer roles; a DID of another wallet, or any external DID, is `404`. A parent wallet has no authority over the DIDs of its children.
 
-- `PATCH /dids/:did` adds or removes services and verification methods. The body lists operations, at most 10 in total; ids are relative fragments:
+- `PATCH /dids/:did` adds or removes services and verification methods. The body lists between 1 and 10 operations in total (an empty body is rejected with 400); ids are relative fragments:
 
   ```json
   {
