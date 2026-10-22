@@ -315,7 +315,15 @@ export class DidService {
         logger.info(
           `Updating DID: +${options.addServices.length}/-${options.removeServices.length} services, +${options.addVerificationMethods.length}/-${options.removeVerificationMethods.length} verification methods`,
         )
-        const didDocument = await this.didRegistrarService.updateDid(tenantAgent, method, options)
+        let didDocument: DidDocument
+        try {
+          didDocument = await this.didRegistrarService.updateDid(tenantAgent, method, options)
+        } catch (error) {
+          // A removal may have reached the ledger although the update reported a failure; the error is what the
+          // client gets to see either way
+          await this.deleteKeysRemovedOnLedger(tenantAgent, didRecord, options, didRegistrar)
+          throw error
+        }
         await this.deleteRemovedKeys(tenantAgent, didRecord, didDocument, options, didRegistrar)
         return new DidDocumentDto(didDocument)
       },
@@ -457,11 +465,11 @@ export class DidService {
   }
 
   /**
-   * Deletes the private keys of the verification methods a successful update removed: a removed key is often one that
-   * is rotated or suspected compromised, and nothing can reach it any more. Only keys the wallet mapped to a removed
-   * fragment before the update are candidates, and a key is kept when it controls the DID, when the updated document
-   * still has its fragment, or when the DID record still maps it. A failure is logged (without key ids) and does not
-   * fail the request: the update itself succeeded.
+   * Deletes the private keys of the verification methods an update removed (after a success, or after a failure once
+   * the ledger shows them gone: see `deleteKeysRemovedOnLedger`): a removed key is often one that is rotated or
+   * suspected compromised, and nothing can reach it any more. Only keys the wallet mapped to a removed fragment before
+   * the update are candidates, and a key is kept when it controls the DID, when the updated document still has its
+   * fragment, or when the DID record still maps it. A failure is logged (without key ids) and does not fail the request.
    */
   private async deleteRemovedKeys(
     tenantAgent: TenantAgent,
@@ -516,6 +524,71 @@ export class DidService {
     if (failed) {
       logger.warn(`Could not delete ${failed} private key(s) of the removed verification methods`)
     }
+  }
+
+  /**
+   * After an update that reported a failure: a removal can still have reached the ledger (a partial did:hedera batch, a
+   * did:indybesu transaction mined after its receipt timed out), and a retry would be rejected because the verification
+   * method no longer exists, so its private key could never be deleted. The ledger is read once more: the removed
+   * verification methods it no longer shows are dropped from the DID record (which takes the ledger document, as after
+   * a successful update), and their private keys are deleted with the rules of `deleteRemovedKeys`. When the ledger
+   * cannot be read, shows no document, shows the DID deactivated, or the record cannot be updated, nothing is deleted.
+   * Nothing here throws: the caller rethrows the update's own error.
+   */
+  private async deleteKeysRemovedOnLedger(
+    tenantAgent: TenantAgent,
+    recordBefore: DidRecord,
+    options: UpdateDidOptions,
+    didRegistrar: DidRegistrar,
+  ): Promise<void> {
+    if (!options.removeVerificationMethods.length) {
+      return
+    }
+    const logger = this.logger.child('deleteKeysRemovedOnLedger', { did: options.did })
+    const protectedFragment = didRegistrar.protectedKeyFragment?.toLowerCase()
+
+    let ledgerDocument: DidDocument
+    let removedOnLedger: string[]
+    try {
+      const resolution = await this.resolveFromLedger(tenantAgent, options.did)
+      if (!resolution.didDocument || resolution.didDocumentMetadata?.deactivated === true) {
+        return
+      }
+      ledgerDocument = resolution.didDocument
+      const onLedger = new Set((ledgerDocument.verificationMethod ?? []).map(({ id }) => fragmentOf(id).toLowerCase()))
+      removedOnLedger = options.removeVerificationMethods.filter(
+        (fragment) => !onLedger.has(fragment.toLowerCase()) && fragment.toLowerCase() !== protectedFragment,
+      )
+      if (!removedOnLedger.length) {
+        return
+      }
+
+      // The record must not keep mappings to keys that are deleted below
+      const [currentRecord] = await tenantAgent.dids.getCreatedDids({ did: options.did })
+      if (!currentRecord) {
+        return
+      }
+      const removed = new Set(removedOnLedger)
+      currentRecord.didDocument = ledgerDocument
+      currentRecord.keys = (currentRecord.keys ?? []).filter(
+        ({ didDocumentRelativeKeyId }) => !removed.has(fragmentOf(didDocumentRelativeKeyId)),
+      )
+      await tenantAgent.dependencyManager.resolve(DidRepository).update(tenantAgent.context, currentRecord)
+    } catch {
+      logger.warn('Could not check the ledger for verification methods removed by the failed update')
+      return
+    }
+
+    logger.warn(
+      `The update failed, but the ledger no longer shows ${removedOnLedger.length} removed verification method(s); deleting their private keys`,
+    )
+    await this.deleteRemovedKeys(
+      tenantAgent,
+      recordBefore,
+      ledgerDocument,
+      { ...options, removeVerificationMethods: removedOnLedger },
+      didRegistrar,
+    )
   }
 
   private async markDeactivated(tenantAgent: TenantAgent, didRecord: DidRecord): Promise<void> {

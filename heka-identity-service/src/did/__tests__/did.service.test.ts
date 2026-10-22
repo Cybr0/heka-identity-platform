@@ -961,15 +961,125 @@ describe('DidService', () => {
           expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
         })
 
-        test('a failed update deletes nothing', async () => {
-          vi.mocked(didRegistrarService.updateDid).mockRejectedValue(
-            new InternalServerErrorException('DID document was not updated: timeout'),
-          )
+        describe('after a failed update', () => {
+          const updateError = new InternalServerErrorException('DID document was not updated: timeout')
+          const ledgerAfter = (didDocument: DidDocument | null, didDocumentMetadata: Record<string, unknown> = {}) =>
+            didResolutionResultStub({ didDocument, didDocumentMetadata })
+          // What the method wrapper left in the wallet: did:hedera takes the ledger document but keeps every mapping
+          let recordAfterFailure: DidRecord
 
-          await expect(
-            didService.update(orgAdmin, tenantAgent, did, { removeVerificationMethods: ['#key-1'] }),
-          ).rejects.toThrow(InternalServerErrorException)
-          expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+          const failingUpdate = (
+            req: Parameters<DidService['update']>[3] = { removeVerificationMethods: ['#key-1'] },
+          ) => didService.update(orgAdmin, tenantAgent, did, req)
+
+          beforeEach(() => {
+            vi.mocked(didRegistrarService.updateDid).mockRejectedValue(updateError)
+            recordAfterFailure = recordAfter(currentDocument(), [...keyBefore])
+            vi.mocked(tenantAgent.dids.getCreatedDids)
+              .mockResolvedValueOnce([didRecord])
+              .mockResolvedValue([recordAfterFailure])
+          })
+
+          test('deletes the private key of a removal the ledger shows, drops its mapping and rethrows the error', async () => {
+            vi.mocked(tenantAgent.dids.resolve)
+              .mockResolvedValueOnce(ledgerResolution())
+              .mockResolvedValueOnce(ledgerAfter(documentWithout('#key-1')))
+            const childLogger = createMock<Logger>()
+            vi.mocked(logger.child).mockReturnValue(childLogger)
+
+            await expect(failingUpdate()).rejects.toBe(updateError)
+
+            expect(tenantAgent.dids.resolve).toHaveBeenLastCalledWith(did, {
+              useCache: false,
+              useLocalCreatedDidRecord: false,
+            })
+            expect(tenantAgent.kms.deleteKey).toHaveBeenCalledExactlyOnceWith({ keyId: 'kms-1' })
+            expect(didRepository.update).toHaveBeenCalledWith(tenantAgent.context, recordAfterFailure)
+            expect(recordAfterFailure.keys).toEqual([keyBefore[0], keyBefore[2]])
+            expect(recordAfterFailure.didDocument?.verificationMethod?.map(({ id }) => id)).toEqual([rootKey])
+            expect(childLogger.warn).toHaveBeenCalledWith(
+              'The update failed, but the ledger no longer shows 1 removed verification method(s); deleting their private keys',
+            )
+            const logged = JSON.stringify([
+              ...vi.mocked(childLogger.warn).mock.calls,
+              ...vi.mocked(childLogger.info).mock.calls,
+            ])
+            expect(logged).not.toContain('kms-')
+          })
+
+          test('keeps the key of a removal the ledger does not show, and leaves the record as it is', async () => {
+            // The second read still shows #key-1
+            await expect(failingUpdate()).rejects.toBe(updateError)
+
+            expect(tenantAgent.dids.resolve).toHaveBeenCalledTimes(2)
+            expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+            expect(didRepository.update).not.toHaveBeenCalled()
+            expect(recordAfterFailure.keys).toEqual(keyBefore)
+          })
+
+          test.each([
+            ['the ledger read throws', () => Promise.reject(new Error('mirror node: ECONNRESET'))],
+            ['the ledger shows no document', () => Promise.resolve(ledgerAfter(null))],
+            [
+              'the ledger shows the DID deactivated',
+              () => Promise.resolve(ledgerAfter(documentWithout('#key-1'), { deactivated: true })),
+            ],
+          ])('deletes nothing and rethrows the original error when %s', async (_case, secondRead) => {
+            vi.mocked(tenantAgent.dids.resolve)
+              .mockResolvedValueOnce(ledgerResolution())
+              .mockImplementationOnce(secondRead)
+
+            await expect(failingUpdate()).rejects.toBe(updateError)
+
+            expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+            expect(didRepository.update).not.toHaveBeenCalled()
+          })
+
+          test('deletes nothing and rethrows the original error when the DID record cannot be updated', async () => {
+            vi.mocked(tenantAgent.dids.resolve)
+              .mockResolvedValueOnce(ledgerResolution())
+              .mockResolvedValueOnce(ledgerAfter(documentWithout('#key-1')))
+            didRepository.update.mockRejectedValue(new Error('storage error'))
+
+            await expect(failingUpdate()).rejects.toBe(updateError)
+
+            expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+          })
+
+          test('never deletes the key that controls the DID, even when the ledger shows it backing nothing', async () => {
+            // #key-1 shares the root key's KMS key, and the ledger shows neither of them
+            const shared = [keyBefore[0], { kmsKeyId: 'root-kms', didDocumentRelativeKeyId: '#key-1' }, keyBefore[2]]
+            didRecord.keys = [...shared]
+            recordAfterFailure.keys = [...shared]
+            vi.mocked(tenantAgent.dids.resolve)
+              .mockResolvedValueOnce(ledgerResolution())
+              .mockResolvedValueOnce(ledgerAfter(documentWithout('#key-1', '#did-root-key')))
+
+            await expect(failingUpdate()).rejects.toBe(updateError)
+
+            expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+            expect(recordAfterFailure.keys).toEqual([keyBefore[0], keyBefore[2]])
+          })
+
+          test('keeps a key the DID record still maps under another verification method', async () => {
+            const shared = [keyBefore[0], keyBefore[1], { kmsKeyId: 'kms-1', didDocumentRelativeKeyId: '#key-2' }]
+            didRecord.keys = [...shared]
+            recordAfterFailure.keys = [...shared]
+            vi.mocked(tenantAgent.dids.resolve)
+              .mockResolvedValueOnce(ledgerResolution())
+              .mockResolvedValueOnce(ledgerAfter(documentWithout('#key-1')))
+
+            await expect(failingUpdate()).rejects.toBe(updateError)
+
+            expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+          })
+
+          test('an update without removed verification methods does not read the ledger again', async () => {
+            await expect(failingUpdate({ removeServices: ['#svc-1'] })).rejects.toBe(updateError)
+
+            expect(tenantAgent.dids.resolve).toHaveBeenCalledTimes(1)
+            expect(tenantAgent.kms.deleteKey).not.toHaveBeenCalled()
+          })
         })
 
         test('a failed deletion does not fail the update and is logged without key ids', async () => {
