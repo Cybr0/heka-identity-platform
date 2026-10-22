@@ -10,6 +10,7 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common'
 import { ConfigType } from '@nestjs/config'
@@ -302,11 +303,12 @@ export class DidService {
           await this.markDeactivated(tenantAgent, didRecord)
           throw new ConflictException('DID is deactivated')
         }
-        const currentDidDocument = resolution.didDocument ?? didRecord.didDocument
+        // Without the ledger document neither the operations nor a deactivation can be checked; the wallet's copy may
+        // be stale, so it is no substitute. Resolvers report transport errors as `notFound` too, so no detail is given
+        const currentDidDocument = resolution.didDocument
         if (!currentDidDocument) {
-          throw new InternalServerErrorException(
-            `Unable to resolve the current DID document: ${resolution.didResolutionMetadata.error ?? 'unknown error'}`,
-          )
+          logger.warn(`Ledger resolution failed: ${resolution.didResolutionMetadata.error ?? 'unknown error'}`)
+          throw new ServiceUnavailableException('Unable to read the current DID document from its ledger; retry later')
         }
 
         const options = this.toUpdateOptions(did, currentDidDocument, req, didRegistrar)

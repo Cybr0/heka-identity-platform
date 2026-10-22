@@ -7,6 +7,7 @@ import {
   ForbiddenException,
   InternalServerErrorException,
   NotFoundException,
+  ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common'
 import { ConfigType } from '@nestjs/config'
@@ -886,6 +887,19 @@ describe('DidService', () => {
         await expect(
           unrestricted.update(verifier, tenantAgent, did, { removeServices: ['#svc-1'] }),
         ).resolves.toBeDefined()
+      })
+
+      test('fails with 503 when the ledger cannot be read, instead of trusting the wallet copy', async () => {
+        vi.mocked(tenantAgent.dids.resolve).mockResolvedValue(
+          didResolutionResultStub({ didResolutionMetadata: { error: 'notFound', message: 'mirror node: ECONNRESET' } }),
+        )
+
+        const update = didService.update(orgAdmin, tenantAgent, did, { removeServices: ['#svc-1'] })
+
+        await expect(update).rejects.toThrow(ServiceUnavailableException)
+        await expect(update).rejects.toThrow('Unable to read the current DID document from its ledger; retry later')
+        await expect(update).rejects.not.toThrow('ECONNRESET')
+        expect(didRegistrarService.updateDid).not.toHaveBeenCalled()
       })
 
       test('a DID the wallet deactivated is not updated (409)', async () => {
