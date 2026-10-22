@@ -454,6 +454,8 @@ paths:
                 $ref: "#/components/schemas/RegisterSchemaResponse"
         "400": *a11
         "401": *a12
+        "422":
+          description: The issuer DID is deactivated
       security:
         - bearer: []
       summary: Registration schema
