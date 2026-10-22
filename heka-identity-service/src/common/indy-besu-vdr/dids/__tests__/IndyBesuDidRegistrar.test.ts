@@ -204,7 +204,7 @@ describe('IndyBesuDidRegistrar', () => {
       expect(context.kms.deleteKey).not.toHaveBeenCalled()
     })
 
-    test('update: a failed write with the ledger unchanged fails, deletes the new keys and keeps the record', async () => {
+    test('update: a failed write with the ledger unchanged fails and keeps the record and the new keys', async () => {
       context.didRegistry.updateDid.mockRejectedValue(new Error('Ledger Client: Transaction reverted: 0xe9aeaecd'))
 
       const result = await registrar.update(context.agentContext, {
@@ -214,7 +214,7 @@ describe('IndyBesuDidRegistrar', () => {
       })
 
       expect(result.didState).toEqual({ state: 'failed', reason: 'Ledger Client: Transaction reverted: 0xe9aeaecd' })
-      expect(context.kms.deleteKey).toHaveBeenCalledWith({ keyId: 'new-key' })
+      expect(context.kms.deleteKey).not.toHaveBeenCalled()
       expect(context.didRepository.update).not.toHaveBeenCalled()
       expect(didRecord.didDocument?.service).toBeUndefined()
     })
@@ -261,7 +261,7 @@ describe('IndyBesuDidRegistrar', () => {
 
       expect(result.didState).toMatchObject({ state: 'failed', reason: expect.stringContaining('#KEY-1') })
       expect(context.didRegistry.updateDid).not.toHaveBeenCalled()
-      expect(context.kms.deleteKey).toHaveBeenCalledWith({ keyId: 'new-key' })
+      expect(context.kms.deleteKey).not.toHaveBeenCalled()
     })
 
     test('update: a DID that is not in the wallet fails without a write', async () => {

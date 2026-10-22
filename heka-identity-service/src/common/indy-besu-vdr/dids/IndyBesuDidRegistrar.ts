@@ -93,37 +93,29 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
 
   /**
    * Replaces the DID document on the ledger, sent by the DID's own account (`updateDid`, no endorser). The owner key must
-   * stay the first verification method, unchanged: it is the DID's address and the only key the ledger accepts.
+   * stay the first verification method, unchanged: it is the DID's address and the only key the ledger accepts. The new
+   * keys in `secret.keys` belong to the caller, which deletes them when the update fails.
    */
   public async update(agentContext: AgentContext, options: IndyBesuDidUpdateOptions): Promise<DidUpdateResult> {
     const didRegistry = agentContext.dependencyManager.resolve(DidRegistry)
     const didRepository = agentContext.dependencyManager.resolve(DidRepository)
-    const kms = agentContext.dependencyManager.resolve(Kms.KeyManagementApi)
     const { did } = options
     const newKeys = options.secret?.keys ?? []
-
-    // The keys generated for this update are of no use when it fails
-    const fail = async (reason: string): Promise<DidUpdateResult> => {
-      for (const key of newKeys) {
-        await kms.deleteKey({ keyId: key.kmsKeyId }).catch(() => undefined)
-      }
-      return failedResult(reason)
-    }
 
     // The type allows only `setDidDocument`, but the options come through Credo's generic `DidsApi.update`
     const operation: string | undefined = options.didDocumentOperation
     if (operation && operation !== 'setDidDocument') {
-      return await fail(`did:indybesu replaces the whole document; '${operation}' is not supported`)
+      return failedResult(`did:indybesu replaces the whole document; '${operation}' is not supported`)
     }
     if (!(options.didDocument instanceof DidDocument) || options.didDocument.id !== did) {
-      return await fail('The new DID document must be a DidDocument of the DID')
+      return failedResult('The new DID document must be a DidDocument of the DID')
     }
     const didDocument = options.didDocument
 
     const didRecord = await didRepository.findCreatedDid(agentContext, did)
     const ownerKey = didRecord && findOwnerKey(didRecord.keys)
     if (!didRecord || !ownerKey) {
-      return await fail('DID not found in this wallet')
+      return failedResult('DID not found in this wallet')
     }
 
     const ledgerDocument = toIndyBesuDidDocument(didDocument)
@@ -137,7 +129,7 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
         currentOwner.id !== newOwner.id ||
         currentOwner.publicKeyBase58 !== newOwner.publicKeyBase58
       ) {
-        return await fail(`The owner key ${OWNER_KEY_FRAGMENT} must stay the first verification method, unchanged`)
+        return failedResult(`The owner key ${OWNER_KEY_FRAGMENT} must stay the first verification method, unchanged`)
       }
 
       await didRegistry.updateDid(ledgerDocument, await IndyBesuSigner.create(agentContext, ownerKey.kmsKeyId))
@@ -148,7 +140,7 @@ export class IndyBesuDidRegistrar implements DidRegistrar {
         .then(({ document }) => canonicalJson(document) === canonicalJson(ledgerDocument))
         .catch(() => false)
       if (!written) {
-        return await fail(errorReason(error))
+        return failedResult(errorReason(error))
       }
     }
 
