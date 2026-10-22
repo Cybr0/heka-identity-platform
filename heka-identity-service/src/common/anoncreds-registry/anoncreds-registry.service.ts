@@ -16,10 +16,16 @@ import { ConfigType } from '@nestjs/config'
 import { TenantAgent } from 'common/agent'
 import AgentConfig from 'config/agent'
 
-import { assertDidNotDeactivated } from '../did-registrar/did-deactivation'
+import { assertDidNotDeactivatedOnLedger } from '../did-registrar/did-deactivation'
 
 import { AnoncredsRegistry, CredentialDefinition, Schema } from './anoncreds-registry.types'
 import { AnoncredsHederaRegistrar, AnoncredsIndyBesuRegistrar, AnoncredsIndyRegistrar } from './methods'
+
+/** Options of an AnonCreds registration. */
+export interface AnoncredsRegistrationOptions {
+  /** The caller already ran `assertDidNotDeactivatedOnLedger` for the issuer DID, so it is not resolved again. */
+  issuerDidChecked?: boolean
+}
 
 @Injectable()
 export class AnoncredsRegistryService {
@@ -87,14 +93,18 @@ export class AnoncredsRegistryService {
   public async registerSchema(
     tenantAgent: TenantAgent,
     schema: Schema,
+    options: AnoncredsRegistrationOptions = {},
   ): Promise<{
     schema: AnonCredsSchema
     schemaId: string
   }> {
     const registry = this.getAnoncredsRegistry(schema.issuerId)
-    // A deactivated DID registers nothing new. This is the shared path of POST /schemas and the schema-v2 Aries
-    // registration; revocation registries stay allowed for credentials issued before the deactivation.
-    await assertDidNotDeactivated(tenantAgent, schema.issuerId)
+    // A deactivated DID (on its ledger or by the wallet) registers nothing new. This is the shared path of POST /schemas
+    // and the schema-v2 Aries registration, which checks once for both writes; revocation registries stay allowed for
+    // credentials issued before the deactivation.
+    if (!options.issuerDidChecked) {
+      await assertDidNotDeactivatedOnLedger(tenantAgent, schema.issuerId)
+    }
     const createSchemaResult = await registry.registerSchema(tenantAgent, schema)
 
     const { schemaState } = createSchemaResult
@@ -155,13 +165,16 @@ export class AnoncredsRegistryService {
   public async registerCredentialDefinition(
     tenantAgent: TenantAgent,
     credDef: CredentialDefinition,
+    options: AnoncredsRegistrationOptions = {},
   ): Promise<{
     credentialDefinition: AnonCredsCredentialDefinition
     credentialDefinitionId: string
   }> {
     const registry = this.getAnoncredsRegistry(credDef.issuerId)
     // Shared path of POST /credential-definitions and the schema-v2 Aries registration (see registerSchema)
-    await assertDidNotDeactivated(tenantAgent, credDef.issuerId)
+    if (!options.issuerDidChecked) {
+      await assertDidNotDeactivatedOnLedger(tenantAgent, credDef.issuerId)
+    }
     const registrationResult = await registry.registerCredentialDefinition(tenantAgent, credDef)
     const registrationState = registrationResult.credentialDefinitionState
     if (registrationState.state !== 'finished') {

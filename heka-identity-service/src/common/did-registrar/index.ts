@@ -10,6 +10,7 @@ export {
 } from './did-registrar.types'
 export {
   assertDidNotDeactivated,
+  assertDidNotDeactivatedOnLedger,
   DID_DEACTIVATED_TAG,
   isDidRecordDeactivated,
   isOwnDidDeactivated,

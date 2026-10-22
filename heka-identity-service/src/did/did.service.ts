@@ -327,7 +327,9 @@ export class DidService {
 
   /**
    * Deactivates a DID of the caller's wallet, irreversibly. A DID that is already deactivated is returned as is, without
-   * a ledger write. The keys stay in the wallet: AnonCreds credentials issued with the DID remain revocable.
+   * a ledger write. A deactivation that reports a failure although the ledger, read again, shows the DID deactivated (a
+   * lost response) succeeds as well. The keys stay in the wallet: AnonCreds credentials issued with the DID remain
+   * revocable.
    *
    * `Wallet.publicDid` is a did:key (`MAIN_DID_METHOD`), which cannot be deactivated. Should the main method ever be one
    * that can, deactivating the main DID must also clear `Wallet.publicDid`.
@@ -355,7 +357,18 @@ export class DidService {
           })
         }
 
-        const didDocument = await this.didRegistrarService.deactivateDid(tenantAgent, method, did)
+        let didDocument: DidDocument
+        try {
+          didDocument = await this.didRegistrarService.deactivateDid(tenantAgent, method, did)
+        } catch (error) {
+          // The deactivation may have reached the ledger although it reported a failure (a lost response)
+          const reconciled = await this.reconcileFailedDeactivation(tenantAgent, didRecord)
+          if (!reconciled) {
+            throw error
+          }
+          logger.warn('Deactivation reported a failure, but the ledger shows the DID deactivated')
+          return new DidDocumentDto(reconciled, { deactivated: true })
+        }
         // The registrar updated the record (its document) in the meantime
         const [deactivatedRecord] = await tenantAgent.dids.getCreatedDids({ did })
         await this.markDeactivated(tenantAgent, deactivatedRecord ?? didRecord)
@@ -414,6 +427,29 @@ export class DidService {
   /** The DID as its ledger has it now, not from a cache or the wallet's own record. */
   private async resolveFromLedger(tenantAgent: TenantAgent, did: string): Promise<DidResolutionResult> {
     return await tenantAgent.dids.resolve(did, { useCache: false, useLocalCreatedDidRecord: false })
+  }
+
+  /**
+   * After a deactivation that reported a failure: when the ledger, read again, shows the DID deactivated, the wallet tags
+   * it and the deactivated document is returned. Otherwise, or when the ledger or the wallet cannot be read or written,
+   * `undefined`: the caller rethrows the original error, which a failure here must not mask.
+   */
+  private async reconcileFailedDeactivation(
+    tenantAgent: TenantAgent,
+    didRecord: DidRecord,
+  ): Promise<DidDocument | undefined> {
+    try {
+      const resolution = await this.resolveFromLedger(tenantAgent, didRecord.did)
+      if (resolution.didDocumentMetadata?.deactivated !== true) {
+        return undefined
+      }
+      // The registrar may have updated the record before it failed
+      const [currentRecord] = await tenantAgent.dids.getCreatedDids({ did: didRecord.did })
+      await this.markDeactivated(tenantAgent, currentRecord ?? didRecord)
+      return resolution.didDocument ?? (await this.documentOf(tenantAgent, currentRecord ?? didRecord))
+    } catch {
+      return undefined
+    }
   }
 
   private async documentOf(tenantAgent: TenantAgent, didRecord: DidRecord): Promise<DidDocument> {

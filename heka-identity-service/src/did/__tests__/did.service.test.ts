@@ -1064,8 +1064,60 @@ describe('DidService', () => {
         )
 
         await expect(didService.deactivate(orgAdmin, tenantAgent, did)).rejects.toThrow('not deactivated')
+        // The ledger was read again after the failure and still shows the DID active
+        expect(tenantAgent.dids.resolve).toHaveBeenCalledTimes(2)
+        expect(tenantAgent.dids.resolve).toHaveBeenLastCalledWith(did, {
+          useCache: false,
+          useLocalCreatedDidRecord: false,
+        })
         expect(didRecord.getTag('hekaDeactivated')).toBeUndefined()
         expect(didRepository.update).not.toHaveBeenCalled()
+      })
+
+      test('a failed ledger write that reached the ledger (lost response) succeeds and tags the record', async () => {
+        vi.mocked(didRegistrarService.deactivateDid).mockRejectedValue(
+          new InternalServerErrorException('DID document was not deactivated: timeout'),
+        )
+        vi.mocked(tenantAgent.dids.resolve)
+          .mockResolvedValueOnce(ledgerResolution())
+          .mockResolvedValueOnce(ledgerResolution({ deactivated: true }))
+
+        const result = await didService.deactivate(orgAdmin, tenantAgent, did)
+
+        expect(result).toEqual(expect.objectContaining({ id: did, deactivated: true }))
+        expect(walletLockService.runExclusive).toHaveBeenCalledOnce()
+        expect(didRecord.getTag('hekaDeactivated')).toBe(true)
+        expect(didRepository.update).toHaveBeenCalledWith(tenantAgent.context, didRecord)
+      })
+
+      test('a ledger that cannot be read after a failed write does not mask the original error', async () => {
+        vi.mocked(didRegistrarService.deactivateDid).mockRejectedValue(
+          new InternalServerErrorException('DID document was not deactivated: timeout'),
+        )
+        vi.mocked(tenantAgent.dids.resolve)
+          .mockResolvedValueOnce(ledgerResolution())
+          .mockRejectedValueOnce(new Error('mirror node unavailable'))
+
+        const deactivation = didService.deactivate(orgAdmin, tenantAgent, did)
+
+        await expect(deactivation).rejects.toThrow(InternalServerErrorException)
+        await expect(deactivation).rejects.toThrow('DID document was not deactivated: timeout')
+        expect(didRecord.getTag('hekaDeactivated')).toBeUndefined()
+        expect(didRepository.update).not.toHaveBeenCalled()
+      })
+
+      test('a failed tag write after the ledger shows the deactivation does not mask the original error', async () => {
+        vi.mocked(didRegistrarService.deactivateDid).mockRejectedValue(
+          new InternalServerErrorException('DID document was not deactivated: timeout'),
+        )
+        vi.mocked(tenantAgent.dids.resolve)
+          .mockResolvedValueOnce(ledgerResolution())
+          .mockResolvedValueOnce(ledgerResolution({ deactivated: true }))
+        didRepository.update.mockRejectedValue(new Error('storage unavailable'))
+
+        await expect(didService.deactivate(orgAdmin, tenantAgent, did)).rejects.toThrow(
+          'DID document was not deactivated: timeout',
+        )
       })
     })
   })

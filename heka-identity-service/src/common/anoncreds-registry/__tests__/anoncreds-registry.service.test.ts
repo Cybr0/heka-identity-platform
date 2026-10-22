@@ -1,12 +1,13 @@
 import type { ConfigType } from '@nestjs/config'
 
+import { DidDocumentRole, DidRecord } from '@credo-ts/core'
 import { createMock } from '@golevelup/ts-vitest'
 import { UnprocessableEntityException } from '@nestjs/common'
 
 import { TenantAgent } from 'common/agent'
 import AgentConfig from 'config/agent'
 
-import { didRecordStub } from '../../../../test/helpers/mock-records'
+import { didRecordStub, didResolutionResultStub } from '../../../../test/helpers/mock-records'
 import { AnoncredsRegistryService } from '../anoncreds-registry.service'
 
 describe('AnoncredsRegistryService', () => {
@@ -16,6 +17,7 @@ describe('AnoncredsRegistryService', () => {
 
   let service: AnoncredsRegistryService
   let tenantAgent: TenantAgent
+  let didRepository: { update: ReturnType<typeof vi.fn> }
 
   const deactivatedRecord = () => didRecordStub({ did: issuerId, getTag: (name: string) => name === 'hekaDeactivated' })
 
@@ -23,8 +25,14 @@ describe('AnoncredsRegistryService', () => {
     service = new AnoncredsRegistryService({
       credentialsConfiguration: { Aries: { networks: ['hedera'] } },
     } as unknown as ConfigType<typeof AgentConfig>)
+    didRepository = { update: vi.fn() }
     tenantAgent = createMock<TenantAgent>({
-      dids: { getCreatedDids: vi.fn().mockResolvedValue([]) },
+      dids: {
+        getCreatedDids: vi.fn().mockResolvedValue([]),
+        resolve: vi.fn().mockResolvedValue(didResolutionResultStub({ didDocument: { id: issuerId } })),
+      },
+      dependencyManager: { resolve: vi.fn().mockReturnValue(didRepository) },
+      config: { logger: { warn: vi.fn() } },
       modules: {
         anoncreds: {
           registerSchema: vi.fn().mockResolvedValue({
@@ -73,6 +81,75 @@ describe('AnoncredsRegistryService', () => {
       await expect(registration).rejects.toThrow(`DID is deactivated: ${issuerId}`)
       expect(tenantAgent.modules.anoncreds.registerSchema).not.toHaveBeenCalled()
     })
+
+    test('asks the ledger, uncached and not from the wallet record', async () => {
+      await service.registerSchema(tenantAgent, schema)
+
+      expect(tenantAgent.dids.resolve).toHaveBeenCalledWith(issuerId, {
+        useCache: false,
+        useLocalCreatedDidRecord: false,
+      })
+    })
+
+    test('rejects a DID deactivated on its ledger but not by the wallet with 422, and tags the wallet record', async () => {
+      const record = new DidRecord({ did: issuerId, role: DidDocumentRole.Created })
+      vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue([record])
+      vi.mocked(tenantAgent.dids.resolve).mockResolvedValue(
+        didResolutionResultStub({ didDocument: { id: issuerId }, didDocumentMetadata: { deactivated: true } }),
+      )
+
+      const registration = service.registerSchema(tenantAgent, schema)
+
+      await expect(registration).rejects.toThrow(UnprocessableEntityException)
+      await expect(registration).rejects.toThrow(`DID is deactivated: ${issuerId}`)
+      expect(tenantAgent.modules.anoncreds.registerSchema).not.toHaveBeenCalled()
+      expect(record.getTag('hekaDeactivated')).toBe(true)
+      expect(didRepository.update).toHaveBeenCalledWith(tenantAgent.context, record)
+    })
+
+    test('rejects a DID deactivated on its ledger with 422 also when the wallet record cannot be tagged', async () => {
+      vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue([
+        new DidRecord({ did: issuerId, role: DidDocumentRole.Created }),
+      ])
+      vi.mocked(tenantAgent.dids.resolve).mockResolvedValue(
+        didResolutionResultStub({ didDocumentMetadata: { deactivated: true } }),
+      )
+      didRepository.update.mockRejectedValue(new Error('storage unavailable'))
+
+      await expect(service.registerSchema(tenantAgent, schema)).rejects.toThrow(UnprocessableEntityException)
+      expect(tenantAgent.modules.anoncreds.registerSchema).not.toHaveBeenCalled()
+      expect(tenantAgent.config.logger.warn).toHaveBeenCalledOnce()
+    })
+
+    test('falls back to the wallet tag when the resolver fails', async () => {
+      vi.mocked(tenantAgent.dids.resolve).mockRejectedValue(new Error('resolver unavailable'))
+
+      const result = await service.registerSchema(tenantAgent, schema)
+      expect(result.schemaId).toBe(schemaId)
+      expect(tenantAgent.config.logger.warn).toHaveBeenCalledOnce()
+
+      vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue([deactivatedRecord()])
+      await expect(service.registerSchema(tenantAgent, schema)).rejects.toThrow(UnprocessableEntityException)
+    })
+
+    test('falls back to the wallet tag when the ledger cannot resolve the DID', async () => {
+      vi.mocked(tenantAgent.dids.resolve).mockResolvedValue(
+        didResolutionResultStub({ didResolutionMetadata: { error: 'notFound' } }),
+      )
+
+      expect((await service.registerSchema(tenantAgent, schema)).schemaId).toBe(schemaId)
+
+      vi.mocked(tenantAgent.dids.getCreatedDids).mockResolvedValue([deactivatedRecord()])
+      await expect(service.registerSchema(tenantAgent, schema)).rejects.toThrow(UnprocessableEntityException)
+    })
+
+    test('skips the check when the caller already ran it', async () => {
+      await service.registerSchema(tenantAgent, schema, { issuerDidChecked: true })
+
+      expect(tenantAgent.dids.resolve).not.toHaveBeenCalled()
+      expect(tenantAgent.dids.getCreatedDids).not.toHaveBeenCalled()
+      expect(tenantAgent.modules.anoncreds.registerSchema).toHaveBeenCalledOnce()
+    })
   })
 
   describe('registerCredentialDefinition', () => {
@@ -94,6 +171,28 @@ describe('AnoncredsRegistryService', () => {
       await expect(registration).rejects.toThrow(UnprocessableEntityException)
       await expect(registration).rejects.toThrow(`DID is deactivated: ${issuerId}`)
       expect(tenantAgent.modules.anoncreds.registerCredentialDefinition).not.toHaveBeenCalled()
+    })
+
+    test('rejects a DID deactivated on its ledger but not by the wallet with 422', async () => {
+      vi.mocked(tenantAgent.dids.resolve).mockResolvedValue(
+        didResolutionResultStub({ didDocumentMetadata: { deactivated: true } }),
+      )
+
+      const registration = service.registerCredentialDefinition(tenantAgent, credentialDefinition)
+
+      await expect(registration).rejects.toThrow(`DID is deactivated: ${issuerId}`)
+      expect(tenantAgent.dids.resolve).toHaveBeenCalledWith(issuerId, {
+        useCache: false,
+        useLocalCreatedDidRecord: false,
+      })
+      expect(tenantAgent.modules.anoncreds.registerCredentialDefinition).not.toHaveBeenCalled()
+    })
+
+    test('skips the check when the caller already ran it', async () => {
+      await service.registerCredentialDefinition(tenantAgent, credentialDefinition, { issuerDidChecked: true })
+
+      expect(tenantAgent.dids.resolve).not.toHaveBeenCalled()
+      expect(tenantAgent.modules.anoncreds.registerCredentialDefinition).toHaveBeenCalledOnce()
     })
   })
 
