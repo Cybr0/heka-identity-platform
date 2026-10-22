@@ -188,7 +188,8 @@ paths:
         "422":
           description: The method or the requested change is not supported
         "503":
-          description: The wallet is busy with another request
+          description: The wallet is busy with another request, or the ledger of the DID cannot
+            be read
       security: *a5
       summary: Update a DID of the wallet
       tags: *a6

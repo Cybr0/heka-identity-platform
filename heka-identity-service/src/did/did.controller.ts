@@ -135,7 +135,9 @@ export class DidController {
   @ApiNotFoundResponse({ description: 'The DID is not a DID of the wallet' })
   @ApiConflictResponse({ description: 'The DID is deactivated' })
   @ApiUnprocessableEntityResponse({ description: 'The method or the requested change is not supported' })
-  @ApiServiceUnavailableResponse({ description: 'The wallet is busy with another request' })
+  @ApiServiceUnavailableResponse({
+    description: 'The wallet is busy with another request, or the ledger of the DID cannot be read',
+  })
   @Patch(':did')
   @Roles(Role.Admin, Role.OrgAdmin, Role.Issuer)
   @UseInterceptors(TenantAgentInterceptor)
