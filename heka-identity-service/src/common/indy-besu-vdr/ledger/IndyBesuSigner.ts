@@ -18,7 +18,9 @@ export interface IndyBesuSignature {
  * The ledger recovers the signer from a signature over the raw keccak digest that `getSigningBytes()` returns, and
  * needs the recovery id. The KMS cannot produce that: Askar's ES256K signs SHA-256 of its input and returns no recovery
  * id, so every signature would recover a different address. Do not "fix" this back to `kms.sign`. The secret is read
- * from Askar for the duration of one signature instead, and overwritten afterwards.
+ * from Askar for the duration of one signature instead. Clearing it afterwards is best effort: the byte buffer is zeroed
+ * and the Askar handle freed, but ethers' `SigningKey` keeps its own copy as an immutable string, which is left to the
+ * garbage collector and cannot be wiped.
  */
 export class IndyBesuSigner {
   public readonly address: string
@@ -76,6 +78,7 @@ export class IndyBesuSigner {
         signature: getBytes(concat([signature.r, signature.s])),
       }
     } finally {
+      // Best effort only: the SigningKey's internal copy of the secret cannot be wiped
       secret?.fill(0)
       keyEntry.key.handle.free()
     }

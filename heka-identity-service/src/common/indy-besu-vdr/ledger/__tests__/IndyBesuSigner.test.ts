@@ -72,7 +72,8 @@ describe('IndyBesuSigner', () => {
     expect(fetchKey).toHaveBeenCalledWith({ name: 'endorser' })
   })
 
-  test('frees the Askar key handle and overwrites the secret after signing', async () => {
+  // Best effort: ethers' SigningKey keeps its own copy of the secret, which cannot be wiped
+  test('frees the Askar key handle and zeroes the secret buffer it read after signing', async () => {
     const signer = await IndyBesuSigner.create(agentContext, 'endorser')
 
     await signer.sign(getBytes(keccak256(toUtf8Bytes('hello'))))
