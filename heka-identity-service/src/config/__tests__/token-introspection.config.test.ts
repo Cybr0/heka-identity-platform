@@ -68,10 +68,23 @@ describe('token introspection config', () => {
     expect(config.timeoutMs).toBe(1500)
   })
 
-  it('treats any value other than "true" as disabled', () => {
-    process.env.OIDC_INTROSPECTION_ENABLED = '1'
+  it.each(['TRUE', 'True', ' true '])('accepts %j as enabled', (value) => {
+    enabledEnv()
+    process.env.OIDC_INTROSPECTION_ENABLED = value
+
+    expect(tokenIntrospectionConfig().enabled).toBe(true)
+  })
+
+  it.each(['false', 'FALSE', ''])('accepts %j as disabled', (value) => {
+    process.env.OIDC_INTROSPECTION_ENABLED = value
 
     expect(tokenIntrospectionConfig().enabled).toBe(false)
+  })
+
+  it.each(['1', 'yes', 'on', 'enabled'])('refuses to start with an unrecognised value %j', (value) => {
+    process.env.OIDC_INTROSPECTION_ENABLED = value
+
+    expect(() => tokenIntrospectionConfig()).toThrow('OIDC_INTROSPECTION_ENABLED must be true or false')
   })
 
   it.each([

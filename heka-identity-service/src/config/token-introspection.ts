@@ -61,7 +61,12 @@ export default registerAs('tokenIntrospection', (): TokenIntrospectionConfig => 
   const problems: string[] = []
   const isProduction = isProductionNodeEnv()
 
-  const enabled = text(process.env.OIDC_INTROSPECTION_ENABLED) === 'true'
+  // A security switch: an unrecognised value must not silently leave the check off
+  const enabledValue = text(process.env.OIDC_INTROSPECTION_ENABLED)?.toLowerCase()
+  if (enabledValue !== undefined && enabledValue !== 'true' && enabledValue !== 'false') {
+    problems.push('OIDC_INTROSPECTION_ENABLED must be true or false')
+  }
+  const enabled = enabledValue === 'true'
   const url = text(process.env.OIDC_INTROSPECTION_URL)
   const clientId = text(process.env.OIDC_INTROSPECTION_CLIENT_ID)
   const clientSecret = text(process.env.OIDC_INTROSPECTION_CLIENT_SECRET)

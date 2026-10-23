@@ -116,7 +116,7 @@ describe('TokenIntrospectionService', () => {
     )
   })
 
-  test.each([401, 403])(
+  test.each([400, 401, 403])(
     'reports rejected client credentials (%i) as a server error, not as a bad token',
     async (status) => {
       fetchMock.mockResolvedValue(fetchResponse({ error: 'invalid_client' }, status))

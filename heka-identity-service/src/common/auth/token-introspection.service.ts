@@ -112,7 +112,9 @@ export class TokenIntrospectionService implements OnModuleInit {
 
     await discardBody(response)
 
-    if (response.status === 401 || response.status === 403) {
+    // RFC 7662 answers a bad token with 200 {active: false}, so 400 (RFC 6749 invalid_client), 401 and 403 all point
+    // at the service's own request or client credentials
+    if (response.status === 400 || response.status === 401 || response.status === 403) {
       logger.error(
         { status: response.status, clientId },
         'Token introspection failed: the provider rejected the client credentials (check OIDC_INTROSPECTION_CLIENT_ID and OIDC_INTROSPECTION_CLIENT_SECRET)',
