@@ -69,7 +69,11 @@ To reject tokens revoked in Keycloak (logout, ended session) before they expire,
 OIDC_INTROSPECTION_ENABLED=true
 OIDC_INTROSPECTION_CLIENT_ID=heka-identity-service
 OIDC_INTROSPECTION_CLIENT_SECRET=dev-only-heka-identity-service-secret-do-not-use-in-production
+# only when the identity service runs in a container (OIDC_ISSUER_URL is localhost):
+# OIDC_INTROSPECTION_URL=http://host.docker.internal:8080/realms/heka-platform/protocol/openid-connect/token/introspect
 ```
+
+A Keycloak that imported the realm before the client got its secret answers `invalid_client`: recreate it so the realm is imported again (`docker compose --profile keycloak up -d --force-recreate keycloak-realms keycloak` at the repository root).
 
 `KC_HOSTNAME` is pinned to `http://localhost:8080` in the root `docker-compose.yml`, so `iss` is the same string whether Keycloak is reached from the host or from a container. Change both `KC_HOSTNAME` and `OIDC_ISSUER_URL` together when deploying elsewhere.
 

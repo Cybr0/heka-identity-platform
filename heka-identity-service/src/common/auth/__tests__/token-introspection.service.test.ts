@@ -116,16 +116,33 @@ describe('TokenIntrospectionService', () => {
     )
   })
 
-  test.each([401, 403])('rejects the token when the provider refuses the client credentials (%i)', async (status) => {
-    fetchMock.mockResolvedValue(fetchResponse({ error: 'invalid_client' }, status))
-    const { service, childLogger } = buildService()
+  test.each([401, 403])(
+    'reports rejected client credentials (%i) as a server error, not as a bad token',
+    async (status) => {
+      fetchMock.mockResolvedValue(fetchResponse({ error: 'invalid_client' }, status))
+      const { service, childLogger } = buildService()
+
+      const error: unknown = await service.assertTokenActive('token').catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(Error)
+      expect(error).not.toBeInstanceOf(UnauthorizedException)
+      expect(String(error)).toContain("rejected client 'heka-identity-service'")
+      expect(String(error)).not.toContain('introspection-secret')
+      expect(childLogger.error).toHaveBeenCalled()
+    },
+  )
+
+  test.each([302, 429, 500, 503])('fails closed on HTTP %i and releases the response body', async (status) => {
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    fetchMock.mockResolvedValue({ ...fetchResponse({}, status), body: { cancel } })
+    const { service } = buildService()
 
     await expect(service.assertTokenActive('token')).rejects.toThrow(UnauthorizedException)
-    expect(childLogger.error).toHaveBeenCalled()
+    expect(cancel).toHaveBeenCalledTimes(1)
   })
 
-  test.each([302, 429, 500, 503])('fails closed on HTTP %i', async (status) => {
-    fetchMock.mockResolvedValue(fetchResponse({}, status))
+  // R6: AbortSignal.timeout rejects with a DOMException named TimeoutError
+  test('fails closed when the introspection request times out', async () => {
+    fetchMock.mockRejectedValue(new DOMException('The operation was aborted due to timeout', 'TimeoutError'))
     const { service } = buildService()
 
     await expect(service.assertTokenActive('token')).rejects.toThrow(UnauthorizedException)
@@ -273,6 +290,27 @@ describe('TokenIntrospectionService', () => {
       expect(error).not.toBeInstanceOf(UnauthorizedException)
       expect(String(error)).toContain('returned an unexpected issuer')
       expect(fetchMock.mock.calls.every(([url]) => url === DISCOVERY_URL)).toBe(true)
+    })
+
+    test('shares one discovery between concurrent requests', async () => {
+      fetchMock.mockImplementation((url: string) =>
+        Promise.resolve(
+          url === DISCOVERY_URL
+            ? fetchResponse({ issuer: ISSUER, introspection_endpoint: INTROSPECTION_URL })
+            : fetchResponse({ active: true }),
+        ),
+      )
+      const { service } = buildService({ url: undefined })
+
+      await Promise.all([
+        service.assertTokenActive('a'),
+        service.assertTokenActive('b'),
+        service.assertTokenActive('c'),
+      ])
+
+      const urls = fetchMock.mock.calls.map(([url]) => url as string)
+      expect(urls.filter((url) => url === DISCOVERY_URL)).toHaveLength(1)
+      expect(urls.filter((url) => url === INTROSPECTION_URL)).toHaveLength(3)
     })
 
     test('retries discovery after a failure', async () => {

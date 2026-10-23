@@ -110,12 +110,17 @@ export class TokenIntrospectionService implements OnModuleInit {
       throw new UnauthorizedException()
     }
 
+    await discardBody(response)
+
     if (response.status === 401 || response.status === 403) {
       logger.error(
         { status: response.status, clientId },
         'Token introspection failed: the provider rejected the client credentials (check OIDC_INTROSPECTION_CLIENT_ID and OIDC_INTROSPECTION_CLIENT_SECRET)',
       )
-      throw new UnauthorizedException()
+      // A server misconfiguration, not a bad token: still fail closed, but as a server error like a failed discovery
+      throw new Error(
+        `token introspection was refused: the provider rejected client '${clientId}' (HTTP ${response.status})`,
+      )
     }
 
     logger.warn({ status: response.status }, 'Token introspection failed: unexpected response')
@@ -149,6 +154,7 @@ export class TokenIntrospectionService implements OnModuleInit {
     // A redirect could point discovery at another host, so redirects are treated as failures
     const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(this.config.timeoutMs) })
     if (!response.ok) {
+      await discardBody(response)
       throw new Error(`OIDC discovery at ${url} failed: HTTP ${response.status}`)
     }
 
@@ -180,6 +186,11 @@ export class TokenIntrospectionService implements OnModuleInit {
       throw new Error(`${name} must use HTTPS in production: ${value}`)
     }
   }
+}
+
+// Release the connection of a response whose body is not read (undici holds it until the body is consumed)
+async function discardBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined)
 }
 
 function isIntrospectionResult(data: unknown): data is { active: boolean } {

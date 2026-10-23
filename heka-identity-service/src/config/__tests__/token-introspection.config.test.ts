@@ -86,6 +86,8 @@ describe('token introspection config', () => {
 
   it.each([
     ['OIDC_INTROSPECTION_URL', 'ftp://idp.example.com/introspect', 'must be an http(s) URL'],
+    ['OIDC_INTROSPECTION_URL', 'http://', 'must be an http(s) URL'],
+    ['OIDC_INTROSPECTION_URL', 'https://idp example.com/introspect', 'must be an http(s) URL'],
     [
       'OIDC_INTROSPECTION_CLIENT_AUTH_METHOD',
       'private_key_jwt',
@@ -135,6 +137,30 @@ describe('token introspection config', () => {
 
     process.env.OIDC_ISSUER_URL = 'HTTPS://idp.example.com/realms/heka'
     expect(tokenIntrospectionConfig().requireHttps).toBe(true)
+  })
+
+  it.each(['staging', 'prod', ' Production '])('treats NODE_ENV=%s as production', (nodeEnv) => {
+    enabledEnv()
+    process.env.NODE_ENV = nodeEnv
+    process.env.OIDC_INTROSPECTION_URL = 'http://idp.example.com/introspect'
+
+    expect(() => tokenIntrospectionConfig()).toThrow('OIDC_INTROSPECTION_URL must use HTTPS in production')
+  })
+
+  it.each(['development', 'test', ''])('treats NODE_ENV=%j as non-production', (nodeEnv) => {
+    enabledEnv()
+    process.env.NODE_ENV = nodeEnv
+    process.env.OIDC_INTROSPECTION_URL = 'http://localhost:8080/introspect'
+
+    expect(tokenIntrospectionConfig().requireHttps).toBe(false)
+  })
+
+  it('accepts an upper-case HTTPS endpoint in production', () => {
+    enabledEnv()
+    process.env.NODE_ENV = 'production'
+    process.env.OIDC_INTROSPECTION_URL = 'HTTPS://idp.example.com/introspect'
+
+    expect(tokenIntrospectionConfig().url).toBe('HTTPS://idp.example.com/introspect')
   })
 
   it('accepts an http endpoint outside production', () => {

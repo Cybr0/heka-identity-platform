@@ -1,5 +1,7 @@
 import { registerAs } from '@nestjs/config'
 
+import { isProductionNodeEnv } from './insecure-defaults'
+
 export const introspectionClientAuthMethods = ['client_secret_basic', 'client_secret_post'] as const
 export type IntrospectionClientAuthMethod = (typeof introspectionClientAuthMethods)[number]
 
@@ -24,7 +26,7 @@ export interface TokenIntrospectionConfig {
   /** Deadline for one introspection or discovery request. When it is exceeded the token is rejected (fail closed). */
   timeoutMs: number
   /**
-   * True in production: the introspection endpoint (configured or discovered) and the issuer used for discovery
+   * True in production (any `NODE_ENV` other than unset, `development` or `test`): the introspection endpoint (configured or discovered) and the issuer used for discovery
    * must be https, because bearer tokens and client credentials are sent there.
    */
   requireHttps: boolean
@@ -57,7 +59,7 @@ const text = (value: string | undefined): string | undefined => {
 
 export default registerAs('tokenIntrospection', (): TokenIntrospectionConfig => {
   const problems: string[] = []
-  const isProduction = process.env.NODE_ENV?.toLowerCase() === 'production'
+  const isProduction = isProductionNodeEnv()
 
   const enabled = text(process.env.OIDC_INTROSPECTION_ENABLED) === 'true'
   const url = text(process.env.OIDC_INTROSPECTION_URL)
@@ -70,9 +72,10 @@ export default registerAs('tokenIntrospection', (): TokenIntrospectionConfig => 
     )
   }
 
-  if (url && !/^https?:\/\//.test(url)) {
+  const urlProtocol = url && URL.canParse(url) ? new URL(url).protocol : undefined
+  if (url && urlProtocol !== 'http:' && urlProtocol !== 'https:') {
     problems.push('OIDC_INTROSPECTION_URL must be an http(s) URL')
-  } else if (isProduction && url && !isHttpsUrl(url)) {
+  } else if (isProduction && url && urlProtocol !== 'https:') {
     problems.push('OIDC_INTROSPECTION_URL must use HTTPS in production')
   } else if (isProduction && enabled && !url && !isHttpsUrl(text(process.env.OIDC_ISSUER_URL))) {
     problems.push('OIDC_ISSUER_URL must use HTTPS in production when the introspection endpoint is discovered')
