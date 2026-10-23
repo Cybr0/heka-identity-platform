@@ -199,6 +199,18 @@ describe('AuthService', () => {
       expect(result.expiresAt).toBe(1_900_000_000)
     })
 
+    test('rejects a revoked token before provisioning the user and wallet', async () => {
+      const request = { headers: { 'sec-websocket-protocol': `heka.bearer, ${jwt}` } } as unknown as IncomingMessage
+      vi.mocked(em.findOne).mockReset()
+      vi.mocked(tokenIntrospection.assertTokenActive).mockRejectedValue(
+        new UnauthorizedException('Token is not active'),
+      )
+
+      await expect(service.validateWebSocketToken(request)).rejects.toThrow('Token is not active')
+      expect(tokenIntrospection.assertTokenActive).toHaveBeenCalledWith(jwt)
+      expect(em.findOne).not.toHaveBeenCalled()
+    })
+
     test('falls back to the Authorization header', async () => {
       const request = { headers: { authorization: `Bearer ${jwt}` } } as IncomingMessage
 

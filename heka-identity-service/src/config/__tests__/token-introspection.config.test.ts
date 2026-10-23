@@ -10,6 +10,7 @@ const ENV_KEYS = [
   'OIDC_INTROSPECTION_CLIENT_SECRET',
   'OIDC_INTROSPECTION_CLIENT_AUTH_METHOD',
   'OIDC_INTROSPECTION_TIMEOUT_MS',
+  'OIDC_ISSUER_URL',
 ]
 
 const enabledEnv = () => {
@@ -40,6 +41,7 @@ describe('token introspection config', () => {
       clientSecret: undefined,
       clientAuthMethod: 'client_secret_basic',
       timeoutMs: 3000,
+      requireHttps: false,
     })
   })
 
@@ -104,6 +106,42 @@ describe('token introspection config', () => {
     process.env.OIDC_INTROSPECTION_CLIENT_SECRET = knownIntrospectionDevSecret
 
     expect(() => tokenIntrospectionConfig()).toThrow('dev secret from the shipped Keycloak realm')
+  })
+
+  it('requires https for the introspection endpoint in production', () => {
+    enabledEnv()
+    process.env.NODE_ENV = 'production'
+    process.env.OIDC_INTROSPECTION_URL = 'http://idp.example.com/introspect'
+
+    expect(() => tokenIntrospectionConfig()).toThrow('OIDC_INTROSPECTION_URL must use HTTPS in production')
+  })
+
+  it('requires https for discovery in production and accepts an https endpoint', () => {
+    enabledEnv()
+    process.env.NODE_ENV = 'production'
+    process.env.OIDC_INTROSPECTION_URL = 'https://idp.example.com/introspect'
+
+    expect(tokenIntrospectionConfig()).toMatchObject({ url: 'https://idp.example.com/introspect', requireHttps: true })
+  })
+
+  it('requires an https issuer in production when the endpoint is discovered', () => {
+    enabledEnv()
+    process.env.NODE_ENV = 'production'
+    process.env.OIDC_ISSUER_URL = 'http://idp.example.com/realms/heka'
+
+    expect(() => tokenIntrospectionConfig()).toThrow(
+      'OIDC_ISSUER_URL must use HTTPS in production when the introspection endpoint is discovered',
+    )
+
+    process.env.OIDC_ISSUER_URL = 'HTTPS://idp.example.com/realms/heka'
+    expect(tokenIntrospectionConfig().requireHttps).toBe(true)
+  })
+
+  it('accepts an http endpoint outside production', () => {
+    enabledEnv()
+    process.env.OIDC_INTROSPECTION_URL = 'http://localhost:8080/introspect'
+
+    expect(tokenIntrospectionConfig()).toMatchObject({ url: 'http://localhost:8080/introspect', requireHttps: false })
   })
 
   it('refuses a short secret in production', () => {

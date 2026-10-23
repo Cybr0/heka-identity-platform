@@ -130,7 +130,7 @@ The realm has Keycloak **Organizations** enabled, so organizations and their mem
 
 A change applies with the user's **next access token**:
 - **Access token lifetime:** 300 s, Keycloak's default; the realm doesn't override it.
-- **Already-issued tokens** keep the old role until they expire, because heka-identity-service doesn't check revocation.
+- **Already-issued tokens** keep the old role until they expire. [Token introspection](../../heka-identity-service/docs/setup.md#token-introspection-revocation-check), when enabled, rejects tokens Keycloak no longer considers active, but it does not update role claims.
 - **Refreshes** pick up the new role.
 - **Service accounts** get it with the next Client Credentials grant.
 

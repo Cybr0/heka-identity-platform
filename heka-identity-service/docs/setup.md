@@ -317,16 +317,16 @@ The service refuses to start when `OIDC_ISSUER_URL` or `OIDC_AUDIENCE` is missin
 
 By default tokens are verified statelessly, so a token revoked at the provider (logout, ended session, admin revocation) keeps working until it expires. With token introspection enabled, the service also asks the provider about every bearer token that passed signature verification, using OAuth 2.0 Token Introspection ([RFC 7662](https://www.rfc-editor.org/rfc/rfc7662)), and rejects it unless the answer is `{"active": true}`. The check runs before the user and the wallet are looked up or provisioned, for both REST requests and WebSocket connections.
 
-| Variable                                | Default               | Description                                                                                             |
-| --------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------- |
-| `OIDC_INTROSPECTION_ENABLED`            | `false`               | Set to `true` to turn the check on.                                                                     |
-| `OIDC_INTROSPECTION_URL`                | _(from discovery)_    | Introspection endpoint; when unset it is taken from `introspection_endpoint` in the discovery document. |
-| `OIDC_INTROSPECTION_CLIENT_ID`          | _(required if on)_    | Confidential client the service authenticates with.                                                     |
-| `OIDC_INTROSPECTION_CLIENT_SECRET`      | _(required if on)_    | Its secret. The shipped dev secret and secrets shorter than 16 characters are refused in production.    |
-| `OIDC_INTROSPECTION_CLIENT_AUTH_METHOD` | `client_secret_basic` | `client_secret_basic` or `client_secret_post`.                                                          |
-| `OIDC_INTROSPECTION_TIMEOUT_MS`         | `3000`                | Deadline for one introspection request.                                                                 |
+| Variable                                | Default               | Description                                                                                                                          |
+| --------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `OIDC_INTROSPECTION_ENABLED`            | `false`               | Set to `true` to turn the check on.                                                                                                  |
+| `OIDC_INTROSPECTION_URL`                | _(from discovery)_    | Introspection endpoint; when unset it is taken from `introspection_endpoint` in the discovery document. Must be https in production. |
+| `OIDC_INTROSPECTION_CLIENT_ID`          | _(required if on)_    | Confidential client the service authenticates with.                                                                                  |
+| `OIDC_INTROSPECTION_CLIENT_SECRET`      | _(required if on)_    | Its secret. The shipped dev secret and secrets shorter than 16 characters are refused in production.                                 |
+| `OIDC_INTROSPECTION_CLIENT_AUTH_METHOD` | `client_secret_basic` | `client_secret_basic` or `client_secret_post`.                                                                                       |
+| `OIDC_INTROSPECTION_TIMEOUT_MS`         | `3000`                | Deadline for one introspection or discovery request.                                                                                 |
 
-The check fails closed: an inactive token, rejected client credentials (`401`/`403`, also logged as an error), `429`, `5xx`, a redirect, a timeout, a network error or a malformed answer all result in `401`. A provider whose discovery document has no `introspection_endpoint` (and no `OIDC_INTROSPECTION_URL`) is reported as a server error, like a failed discovery. The check itself logs neither the token nor the client secret.
+The check fails closed: for the introspection request, an inactive token, rejected client credentials (`401`/`403`, also logged as an error), `429`, `5xx`, a redirect, a timeout, a network error or a malformed answer all result in `401`. Discovery failures (HTTP error, redirect, timeout, no valid `introspection_endpoint`, an http endpoint in production) are server errors (`500`), like a failed JWKS discovery. With `NODE_ENV=production` the introspection endpoint (configured or discovered) and the issuer used for discovery must be https; a configured http endpoint or an http issuer without `OIDC_INTROSPECTION_URL` is refused at startup. The check itself logs neither the token nor the client secret.
 
 Provider notes:
 

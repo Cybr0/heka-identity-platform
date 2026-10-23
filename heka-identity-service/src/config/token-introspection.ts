@@ -21,8 +21,13 @@ export interface TokenIntrospectionConfig {
   clientSecret?: string
   /** How the client authenticates at the introspection endpoint. */
   clientAuthMethod: IntrospectionClientAuthMethod
-  /** Deadline for one introspection request. When it is exceeded the token is rejected (fail closed). */
+  /** Deadline for one introspection or discovery request. When it is exceeded the token is rejected (fail closed). */
   timeoutMs: number
+  /**
+   * True in production: the introspection endpoint (configured or discovered) and the issuer used for discovery
+   * must be https, because bearer tokens and client credentials are sent there.
+   */
+  requireHttps: boolean
 }
 
 export const tokenIntrospectionConfigDefaults = {
@@ -34,6 +39,16 @@ export const tokenIntrospectionConfigDefaults = {
 export const knownIntrospectionDevSecret = 'dev-only-heka-identity-service-secret-do-not-use-in-production'
 
 const MIN_PRODUCTION_SECRET_LENGTH = 16
+
+/** True for a parseable https URL (protocol compared case-insensitively by the URL parser). */
+export const isHttpsUrl = (value: string | undefined): boolean => {
+  if (!value) return false
+  try {
+    return new URL(value).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
 
 const text = (value: string | undefined): string | undefined => {
   const trimmed = value?.trim()
@@ -57,6 +72,10 @@ export default registerAs('tokenIntrospection', (): TokenIntrospectionConfig => 
 
   if (url && !/^https?:\/\//.test(url)) {
     problems.push('OIDC_INTROSPECTION_URL must be an http(s) URL')
+  } else if (isProduction && url && !isHttpsUrl(url)) {
+    problems.push('OIDC_INTROSPECTION_URL must use HTTPS in production')
+  } else if (isProduction && enabled && !url && !isHttpsUrl(text(process.env.OIDC_ISSUER_URL))) {
+    problems.push('OIDC_ISSUER_URL must use HTTPS in production when the introspection endpoint is discovered')
   }
 
   const clientAuthMethod = (text(process.env.OIDC_INTROSPECTION_CLIENT_AUTH_METHOD) ??
@@ -88,5 +107,5 @@ export default registerAs('tokenIntrospection', (): TokenIntrospectionConfig => 
     throw new Error(`Token introspection configuration is invalid:\n - ${problems.join('\n - ')}`)
   }
 
-  return { enabled, url, clientId, clientSecret, clientAuthMethod, timeoutMs }
+  return { enabled, url, clientId, clientSecret, clientAuthMethod, timeoutMs, requireHttps: isProduction }
 })

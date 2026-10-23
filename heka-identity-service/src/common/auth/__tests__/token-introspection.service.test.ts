@@ -28,6 +28,7 @@ const buildService = (overrides: Partial<TokenIntrospectionConfig> = {}) => {
     clientSecret: 'introspection-secret',
     clientAuthMethod: tokenIntrospectionConfigDefaults.clientAuthMethod,
     timeoutMs: tokenIntrospectionConfigDefaults.timeoutMs,
+    requireHttps: false,
     ...overrides,
   }
   const childLogger = createMock<Logger>()
@@ -180,6 +181,78 @@ describe('TokenIntrospectionService', () => {
       const error: unknown = await service.assertTokenActive('token').catch((e: unknown) => e)
       expect(error).not.toBeInstanceOf(UnauthorizedException)
       expect(String(error)).toContain('returned no introspection_endpoint')
+    })
+
+    test('fetches discovery with a deadline and without following redirects', async () => {
+      fetchMock.mockImplementation((url: string) =>
+        Promise.resolve(
+          url === DISCOVERY_URL
+            ? fetchResponse({ introspection_endpoint: INTROSPECTION_URL })
+            : fetchResponse({ active: true }),
+        ),
+      )
+      const { service } = buildService({ url: undefined })
+
+      await service.assertTokenActive('token')
+
+      const { init } = requestOf([DISCOVERY_URL, fetchMock.mock.calls[0][1]])
+      expect(init.redirect).toBe('manual')
+      expect(init.signal).toBeInstanceOf(AbortSignal)
+    })
+
+    test('treats a redirected discovery response as a server error', async () => {
+      fetchMock.mockResolvedValue(fetchResponse({}, 302))
+      const { service } = buildService({ url: undefined })
+
+      const error: unknown = await service.assertTokenActive('token').catch((e: unknown) => e)
+      expect(error).not.toBeInstanceOf(UnauthorizedException)
+      expect(String(error)).toContain('HTTP 302')
+    })
+
+    test('requires an https issuer when https is required', async () => {
+      const { service } = buildService({ url: undefined, requireHttps: true })
+
+      const error: unknown = await service.assertTokenActive('token').catch((e: unknown) => e)
+      expect(String(error)).toContain('must use HTTPS in production')
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    test('rejects a discovered http endpoint when https is required', async () => {
+      const httpsIssuer = 'https://idp.example.com/realms/heka-platform'
+      fetchMock.mockResolvedValue(fetchResponse({ introspection_endpoint: INTROSPECTION_URL }))
+      const logger = createMock<Logger>({ child: vi.fn().mockReturnValue(createMock<Logger>()) })
+      const service = new TokenIntrospectionService(
+        {
+          enabled: true,
+          clientId: 'heka-identity-service',
+          clientSecret: 'introspection-secret',
+          clientAuthMethod: tokenIntrospectionConfigDefaults.clientAuthMethod,
+          timeoutMs: tokenIntrospectionConfigDefaults.timeoutMs,
+          requireHttps: true,
+        },
+        { ...oidcConfig, issuerUrl: httpsIssuer },
+        logger,
+      )
+
+      const error: unknown = await service.assertTokenActive('token').catch((e: unknown) => e)
+      expect(error).not.toBeInstanceOf(UnauthorizedException)
+      expect(String(error)).toContain('introspection_endpoint discovered at')
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    test.each([
+      ['a non-string endpoint', { introspection_endpoint: 42 }, 'returned no introspection_endpoint'],
+      ['a malformed endpoint', { introspection_endpoint: 'not a url' }, 'returned an invalid introspection_endpoint'],
+    ])('reports %s as a server error and does not cache it', async (_name, document, message) => {
+      fetchMock.mockResolvedValue(fetchResponse(document))
+      const { service } = buildService({ url: undefined })
+
+      const error: unknown = await service.assertTokenActive('token').catch((e: unknown) => e)
+      expect(error).not.toBeInstanceOf(UnauthorizedException)
+      expect(String(error)).toContain(message)
+
+      await service.assertTokenActive('token').catch(() => undefined)
+      expect(fetchMock.mock.calls.every(([url]) => url === DISCOVERY_URL)).toBe(true)
     })
 
     test('retries discovery after a failure', async () => {

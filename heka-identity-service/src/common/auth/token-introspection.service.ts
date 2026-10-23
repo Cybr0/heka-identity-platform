@@ -3,7 +3,7 @@ import { ConfigType } from '@nestjs/config'
 
 import { InjectLogger, Logger } from 'common/logger'
 import OidcConfig from 'config/oidc'
-import TokenIntrospectionConfig from 'config/token-introspection'
+import TokenIntrospectionConfig, { isHttpsUrl } from 'config/token-introspection'
 
 const DISCOVERY_PATH = '/.well-known/openid-configuration'
 
@@ -141,23 +141,38 @@ export class TokenIntrospectionService implements OnModuleInit {
   private async discoverEndpoint(): Promise<string> {
     const logger = this.logger.child('discoverEndpoint')
     const issuer = this.oidcConfig.issuerUrl ?? ''
+    this.assertHttps(issuer, 'OIDC_ISSUER_URL (used for introspection endpoint discovery)')
     const url = `${issuer.replace(/\/+$/, '')}${DISCOVERY_PATH}`
     logger.debug(`Fetching OIDC discovery document from ${url}`)
 
-    const response = await fetch(url)
+    // A redirect could point discovery at another host, so redirects are treated as failures
+    const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(this.config.timeoutMs) })
     if (!response.ok) {
       throw new Error(`OIDC discovery at ${url} failed: HTTP ${response.status}`)
     }
 
     const document = (await response.json()) as DiscoveryDocument
-    if (!document.introspection_endpoint) {
+    const endpoint: unknown = document.introspection_endpoint
+    if (typeof endpoint !== 'string' || !endpoint) {
       throw new Error(
         `OIDC discovery at ${url} returned no introspection_endpoint; set OIDC_INTROSPECTION_URL or disable OIDC_INTROSPECTION_ENABLED`,
       )
     }
 
-    logger.info(`Using token introspection endpoint ${document.introspection_endpoint}`)
-    return document.introspection_endpoint
+    if (!URL.canParse(endpoint)) {
+      throw new Error(`OIDC discovery at ${url} returned an invalid introspection_endpoint: ${endpoint}`)
+    }
+    this.assertHttps(endpoint, `introspection_endpoint discovered at ${url}`)
+
+    logger.info(`Using token introspection endpoint ${endpoint}`)
+    return endpoint
+  }
+
+  // Bearer tokens and client credentials are sent to the introspection endpoint, so production requires https
+  private assertHttps(value: string, name: string): void {
+    if (this.config.requireHttps && !isHttpsUrl(value)) {
+      throw new Error(`${name} must use HTTPS in production: ${value}`)
+    }
   }
 }
 
