@@ -1,6 +1,6 @@
 # Keycloak realms
 
-`docker-compose.dev.yml` starts Keycloak with `start-dev --import-realm`, which imports every file in this directory on every start. A realm that already exists in the Keycloak database is **not** overwritten; delete the `keycloak` container to re-import. Three realms are defined:
+The root Compose project (at the repository root: copy `.env.example` to `.env` once, its defaults are enough for Keycloak alone, then `docker compose --profile keycloak up -d keycloak`) starts Keycloak with `start-dev --import-realm`, which imports the `realm-*.json` files of this directory on every start. A realm that already exists in the Keycloak database is **not** overwritten; delete the `keycloak` container to re-import. Three realms are defined:
 
 | File                        | Realm           | Purpose                                                                                                                                                                                            |
 | --------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -61,7 +61,7 @@ OIDC_CLAIM_ORG_ID=heka_organization,org_id
 OIDC_CLAIM_ORG_ID_FIELD=heka_org_id
 ```
 
-The organization id comes from the organization chosen at login (`heka_organization`, its `heka_org_id` attribute), and otherwise from the `org_id` user attribute ([Organizations](#organizations)). The other claim paths keep their defaults (`sub`, `roles`, `name,preferred_username,nickname`). When the identity service runs in a container, keep `OIDC_ISSUER_URL` at the browser-facing value and point `OIDC_JWKS_URI` at `http://host.docker.internal:8080/realms/heka-platform/protocol/openid-connect/certs` (see `heka-identity-service/docker-compose.dev.yml`).
+The organization id comes from the organization chosen at login (`heka_organization`, its `heka_org_id` attribute), and otherwise from the `org_id` user attribute ([Organizations](#organizations)). The other claim paths keep their defaults (`sub`, `roles`, `name,preferred_username,nickname`). When the identity service runs in a container, keep `OIDC_ISSUER_URL` at the browser-facing value and point `OIDC_JWKS_URI` at `http://host.docker.internal:8080/realms/heka-platform/protocol/openid-connect/certs` (see `heka-identity-service/docker-compose.yml`).
 
 To reject tokens revoked in Keycloak (logout, ended session) before they expire, enable token introspection ([setup](../../heka-identity-service/docs/setup.md#token-introspection-revocation-check)). Keycloak only answers introspection requests for tokens whose audience contains the calling client, so the service authenticates as `heka-identity-service`:
 
@@ -71,7 +71,7 @@ OIDC_INTROSPECTION_CLIENT_ID=heka-identity-service
 OIDC_INTROSPECTION_CLIENT_SECRET=dev-only-heka-identity-service-secret-do-not-use-in-production
 ```
 
-`KC_HOSTNAME` is pinned to `http://localhost:8080` in `docker-compose.dev.yml`, so `iss` is the same string whether Keycloak is reached from the host or from a container. Change both `KC_HOSTNAME` and `OIDC_ISSUER_URL` together when deploying elsewhere.
+`KC_HOSTNAME` is pinned to `http://localhost:8080` in the root `docker-compose.yml`, so `iss` is the same string whether Keycloak is reached from the host or from a container. Change both `KC_HOSTNAME` and `OIDC_ISSUER_URL` together when deploying elsewhere.
 
 ## Managing roles
 
@@ -145,7 +145,7 @@ A role change also moves the user to another wallet; the previous wallet keeps i
 
 `--import-realm` only imports a realm that doesn't exist yet. A Keycloak started with an older version of this file may still give `heka-users` (and so every self-registered user) `Admin`, have `Admin` on both service accounts, lack Organizations, and let users edit their own `org_id`. To bring it up to date, either:
 
-- **Dev, no data to keep:** recreate the container, which re-imports the file: `docker compose -f docker-compose.dev.yml up -d --force-recreate keycloak`.
+- **Dev, no data to keep:** recreate the realm copier and Keycloak, which re-imports the file: `docker compose --profile keycloak up -d --force-recreate keycloak-realms keycloak` at the repository root.
 - **Keep the existing users:** in the admin console (`heka-platform` realm):
   1. **Groups:** create `heka-admins` with client role `heka-identity-service` → `Admin`. In `heka-users`, replace the `Admin` client role with `User`. Every member of `heka-users` becomes a `User` with their next token.
   2. **Operators:** move the real operators from `heka-users` to `heka-admins`.
@@ -185,7 +185,8 @@ After either path, decode a token of each service account and check the roles (s
 Start Keycloak (the theme builder runs first and needs network access on the first run):
 
 ```sh
-docker compose -f docker-compose.dev.yml up -d keycloak
+# at the repository root, with .env copied from .env.example
+docker compose --profile keycloak up -d keycloak
 ```
 
 Service-account token for heka-sso-service (Client Credentials):
