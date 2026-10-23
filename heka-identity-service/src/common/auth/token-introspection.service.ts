@@ -8,6 +8,7 @@ import TokenIntrospectionConfig, { isHttpsUrl } from 'config/token-introspection
 const DISCOVERY_PATH = '/.well-known/openid-configuration'
 
 interface DiscoveryDocument {
+  issuer?: string
   introspection_endpoint?: string
 }
 
@@ -152,6 +153,11 @@ export class TokenIntrospectionService implements OnModuleInit {
     }
 
     const document = (await response.json()) as DiscoveryDocument
+    // OIDC Discovery 4.3: the metadata must belong to the configured issuer before any of it is trusted
+    if (document.issuer !== issuer) {
+      throw new Error(`OIDC discovery at ${url} returned an unexpected issuer: ${String(document.issuer)}`)
+    }
+
     const endpoint: unknown = document.introspection_endpoint
     if (typeof endpoint !== 'string' || !endpoint) {
       throw new Error(

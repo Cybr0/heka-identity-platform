@@ -326,14 +326,14 @@ By default tokens are verified statelessly, so a token revoked at the provider (
 | `OIDC_INTROSPECTION_CLIENT_AUTH_METHOD` | `client_secret_basic` | `client_secret_basic` or `client_secret_post`.                                                                                       |
 | `OIDC_INTROSPECTION_TIMEOUT_MS`         | `3000`                | Deadline for one introspection or discovery request.                                                                                 |
 
-The check fails closed: for the introspection request, an inactive token, rejected client credentials (`401`/`403`, also logged as an error), `429`, `5xx`, a redirect, a timeout, a network error or a malformed answer all result in `401`. Discovery failures (HTTP error, redirect, timeout, no valid `introspection_endpoint`, an http endpoint in production) are server errors (`500`), like a failed JWKS discovery. With `NODE_ENV=production` the introspection endpoint (configured or discovered) and the issuer used for discovery must be https; a configured http endpoint or an http issuer without `OIDC_INTROSPECTION_URL` is refused at startup. The check itself logs neither the token nor the client secret.
+The check fails closed: for the introspection request, an inactive token, rejected client credentials (`401`/`403`, also logged as an error), `429`, `5xx`, a redirect, a timeout, a network error or a malformed answer all result in `401`. Discovery failures (HTTP error, redirect, timeout, an `issuer` that differs from `OIDC_ISSUER_URL`, no valid `introspection_endpoint`, an http endpoint in production) are server errors (`500`), like a failed JWKS discovery. With `NODE_ENV=production` the introspection endpoint (configured or discovered) and the issuer used for discovery must be https; a configured http endpoint or an http issuer without `OIDC_INTROSPECTION_URL` is refused at startup. The check itself logs neither the token nor the client secret.
 
 Provider notes:
 
 - **Keycloak** answers only for tokens whose audience contains the calling client, so authenticate as the `OIDC_AUDIENCE` client. The shipped `heka-platform` realm gives the `heka-identity-service` client a dev secret for this (`dev-only-heka-identity-service-secret-do-not-use-in-production`); it still has no login flows.
 - **Auth0** has no RFC 7662 endpoint for access tokens, so leave the check disabled and rely on short access token lifetimes.
 
-Trade-offs: every authenticated request makes one extra call to the provider, adding its latency, and the API is unavailable (`401`) whenever the provider is unreachable.
+Trade-offs: every authenticated request makes one extra call to the provider, adding its latency, and the API is unavailable (`401`) whenever the provider is unreachable. A WebSocket connection is checked once, at the handshake: a token revoked later keeps an open socket until the token's `exp`, when the service closes it.
 
 #### Claim paths
 

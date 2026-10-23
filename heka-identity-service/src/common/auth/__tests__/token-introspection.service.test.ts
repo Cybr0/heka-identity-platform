@@ -161,7 +161,7 @@ describe('TokenIntrospectionService', () => {
       fetchMock.mockImplementation((url: string) =>
         Promise.resolve(
           url === DISCOVERY_URL
-            ? fetchResponse({ introspection_endpoint: INTROSPECTION_URL })
+            ? fetchResponse({ issuer: ISSUER, introspection_endpoint: INTROSPECTION_URL })
             : fetchResponse({ active: true }),
         ),
       )
@@ -187,7 +187,7 @@ describe('TokenIntrospectionService', () => {
       fetchMock.mockImplementation((url: string) =>
         Promise.resolve(
           url === DISCOVERY_URL
-            ? fetchResponse({ introspection_endpoint: INTROSPECTION_URL })
+            ? fetchResponse({ issuer: ISSUER, introspection_endpoint: INTROSPECTION_URL })
             : fetchResponse({ active: true }),
         ),
       )
@@ -219,7 +219,7 @@ describe('TokenIntrospectionService', () => {
 
     test('rejects a discovered http endpoint when https is required', async () => {
       const httpsIssuer = 'https://idp.example.com/realms/heka-platform'
-      fetchMock.mockResolvedValue(fetchResponse({ introspection_endpoint: INTROSPECTION_URL }))
+      fetchMock.mockResolvedValue(fetchResponse({ issuer: httpsIssuer, introspection_endpoint: INTROSPECTION_URL }))
       const logger = createMock<Logger>({ child: vi.fn().mockReturnValue(createMock<Logger>()) })
       const service = new TokenIntrospectionService(
         {
@@ -241,8 +241,12 @@ describe('TokenIntrospectionService', () => {
     })
 
     test.each([
-      ['a non-string endpoint', { introspection_endpoint: 42 }, 'returned no introspection_endpoint'],
-      ['a malformed endpoint', { introspection_endpoint: 'not a url' }, 'returned an invalid introspection_endpoint'],
+      ['a non-string endpoint', { issuer: ISSUER, introspection_endpoint: 42 }, 'returned no introspection_endpoint'],
+      [
+        'a malformed endpoint',
+        { issuer: ISSUER, introspection_endpoint: 'not a url' },
+        'returned an invalid introspection_endpoint',
+      ],
     ])('reports %s as a server error and does not cache it', async (_name, document, message) => {
       fetchMock.mockResolvedValue(fetchResponse(document))
       const { service } = buildService({ url: undefined })
@@ -255,10 +259,26 @@ describe('TokenIntrospectionService', () => {
       expect(fetchMock.mock.calls.every(([url]) => url === DISCOVERY_URL)).toBe(true)
     })
 
+    test.each([
+      [
+        'a different issuer',
+        { issuer: 'https://evil.example.com/realms/heka-platform', introspection_endpoint: INTROSPECTION_URL },
+      ],
+      ['no issuer', { introspection_endpoint: INTROSPECTION_URL }],
+    ])('rejects a discovery document with %s before using its endpoint', async (_name, document) => {
+      fetchMock.mockResolvedValue(fetchResponse(document))
+      const { service } = buildService({ url: undefined })
+
+      const error: unknown = await service.assertTokenActive('token').catch((e: unknown) => e)
+      expect(error).not.toBeInstanceOf(UnauthorizedException)
+      expect(String(error)).toContain('returned an unexpected issuer')
+      expect(fetchMock.mock.calls.every(([url]) => url === DISCOVERY_URL)).toBe(true)
+    })
+
     test('retries discovery after a failure', async () => {
       fetchMock
         .mockResolvedValueOnce(fetchResponse({}, 503))
-        .mockResolvedValueOnce(fetchResponse({ introspection_endpoint: INTROSPECTION_URL }))
+        .mockResolvedValueOnce(fetchResponse({ issuer: ISSUER, introspection_endpoint: INTROSPECTION_URL }))
         .mockResolvedValueOnce(fetchResponse({ active: true }))
       const { service } = buildService({ url: undefined })
 
