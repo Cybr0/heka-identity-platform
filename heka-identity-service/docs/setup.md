@@ -185,7 +185,7 @@ CORS is **enabled by default** (with `Access-Control-Allow-Origin: *`) so that t
 
 | Variable               | Description                                                                                                                                                                                    | Default |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `EXPRESS_ENABLE_CORS`  | Set to `false` (or any value other than `true`) to disable CORS. Unset enables it.                                                                                                             | `true`  |
+| `EXPRESS_ENABLE_CORS`  | Set to `false` (or any non-empty value other than `true`) to disable CORS. Unset or empty enables it.                                                                                          | `true`  |
 | `EXPRESS_CORS_OPTIONS` | JSON string of [CORS options](https://github.com/expressjs/cors#configuration-options) passed directly to `app.enableCors()`. Must be valid JSON; invalid JSON crashes on startup (fail-fast). | `{}`    |
 
 > **Security warning:** Enabling CORS without setting an `origin` inside `EXPRESS_CORS_OPTIONS` defaults to `Access-Control-Allow-Origin: *`.
@@ -248,10 +248,12 @@ Real deployments should set `NODE_ENV=production` explicitly: an unset `NODE_ENV
 | ---------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `EXPRESS_HOST`         | `localhost`                                                       | Host the server binds to.                                                                            |
 | `EXPRESS_PORT`         | `3000`                                                            | Port for the REST API and Swagger UI.                                                                |
-| `EXPRESS_PREFIX`       | _(unset)_                                                         | Optional global URL prefix (e.g. `/api`).                                                            |
+| `EXPRESS_PREFIX`       | _(unset)_                                                         | Optional global URL prefix, without a leading slash (e.g. `api`).                                    |
 | `APP_ENDPOINT`         | `http://${EXPRESS_HOST}:${EXPRESS_PORT}` (+ `/${EXPRESS_PREFIX}`) | Public REST API URL used in AnonCreds tails file and status list URLs. Must be reachable by wallets. |
 | `EXPRESS_ENABLE_CORS`  | `true`                                                            | Enable CORS handling.                                                                                |
 | `EXPRESS_CORS_OPTIONS` | `{}`                                                              | JSON-encoded options passed to the Express CORS middleware.                                          |
+
+`APP_ENDPOINT` falls back to the default only when it is unset: an empty `APP_ENDPOINT=` is used as is and produces relative URLs, so leave the variable out instead.
 
 ### Agent transports
 
