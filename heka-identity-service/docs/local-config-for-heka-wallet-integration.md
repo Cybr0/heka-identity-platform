@@ -10,7 +10,7 @@
 The PC running the Identity Service and the mobile wallet **MUST** be connected to the same Wi-Fi network.
 
 1. Obtain the IP address of your host.
-2. Override the Identity Service's advertised endpoint URLs to use your host IP instead of `localhost`. These are env-var-driven — set `AGENT_HTTP_ENDPOINT`, `AGENT_WS_ENDPOINT`, and `AGENT_OID4VCI_ENDPOINT` in your `.env` (no source edits needed). See [Setup — Agent Transports](setup.md#agent-transports) for the full list of relevant variables and their defaults.
+2. Override the Identity Service's advertised endpoint URLs to use your host IP instead of `localhost`. These are env-var-driven — set `AGENT_HTTP_ENDPOINT`, `AGENT_WS_ENDPOINT`, `AGENT_OID4VCI_ENDPOINT` and `APP_ENDPOINT` (`http://<host-ip>:3000`, for AnonCreds tails files and status lists) in your `.env` (no source edits needed), or set `EXPRESS_HOST=<host-ip>`, which all four default to. See [Setup — Agent Transports](setup.md#agent-transports) for the full list of relevant variables and their defaults. Logos still need an https `FILE_STORAGE_FS_PUBLIC_URL`, because wallets reject plain http logo URLs.
 3. Run the Identity Service.
 
 ## Solution 2: ngrok + nginx
@@ -18,7 +18,7 @@ The PC running the Identity Service and the mobile wallet **MUST** be connected 
 - Use [ngrok](https://ngrok.com/) (with a free account) to enable access to your local Heka Identity Service instance from the Heka Wallet — it provides easy setup and usage.
 - However, since the Identity Service exposes multiple endpoints, you also need to configure a web server to expose a single port and forward messages to the Identity Service. It's strongly recommended to use [nginx](https://www.nginx.com/) with the configuration below.
   - The Heka Identity Service REST API (not based on Credo transports) is hosted on a separate port. Wallets only need two public routes from it: AnonCreds tails files (`/revocation/tails/`, required to prove non-revocation) and credential status lists (`/credentials/status/`). Their public base URL is `APP_ENDPOINT`. The config below assumes `EXPRESS_PREFIX` is unset; with a prefix (e.g. `api`) these routes are served under it, so use `location /api/revocation/tails/` and `location /api/credentials/status/` and include the prefix in `APP_ENDPOINT` (`https://<tunnel>/api`).
-  - The OID4VC router mounts its routes at the path of the public URL it is given (`AGENT_OID4VCI_ENDPOINT`), so requests under `/openId/oid4vci/` and `/openId/oid4vp/` must be forwarded **with** the `/openId` prefix. Only uploaded files (logos) are served from the root of port `3003`, which is what the prefix-stripping `/openId/` location is for.
+  - The OID4VC router mounts its routes at the path of the public URL it is given (`AGENT_OID4VCI_ENDPOINT`), so requests under `/openId/oid4vci/` and `/openId/oid4vp/` must be forwarded **with** the `/openId` prefix. Only uploaded files (logos) are served from the root of port `3003`, which is what the prefix-stripping `/openId/` location is for. The same location serves the OCA bundles (credential branding, `files/oca`); to have the Heka Wallet use them, set its `AGENCY_PROVIDER_URL=https://<tunnel>/openId`.
   - Wallets also fetch issuer metadata from `/.well-known/openid-credential-issuer/openId/oid4vci/<issuerId>` (RFC 8414 style), so `/.well-known/` must be forwarded to the OID4VC port as well.
   - If you have a paid ngrok account, you can probably skip nginx and expose multiple ports out of the box.
 
@@ -104,6 +104,8 @@ FILE_STORAGE_FS_PUBLIC_URL=https://fd31-2a03-ed80-1-0-1c38-8e52-ec9d-30e7.ngrok.
 # tails files and status lists (REST API port)
 APP_ENDPOINT=https://fd31-2a03-ed80-1-0-1c38-8e52-ec9d-30e7.ngrok.io
 ```
+
+When the Identity Service runs from the root `docker-compose.yml`, set the same values in the root `.env` with the `IDENTITY_SERVICE_` prefix (e.g. `IDENTITY_SERVICE_APP_ENDPOINT`, `IDENTITY_SERVICE_AGENT_HTTP_ENDPOINT`).
 
 Note that ngrok only exposes TLS endpoints, so the WebSocket endpoint must use `wss://`.
 

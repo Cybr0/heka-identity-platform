@@ -246,7 +246,7 @@ Real deployments should set `NODE_ENV=production` explicitly: an unset `NODE_ENV
 
 | Variable               | Default                                                           | Description                                                                                          |
 | ---------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `EXPRESS_HOST`         | `localhost`                                                       | Host the server binds to.                                                                            |
+| `EXPRESS_HOST`         | `localhost`                                                       | Host in the default URLs (`APP_ENDPOINT`, `AGENT_*_ENDPOINT`); servers listen on all interfaces.     |
 | `EXPRESS_PORT`         | `3000`                                                            | Port for the REST API and Swagger UI.                                                                |
 | `EXPRESS_PREFIX`       | _(unset)_                                                         | Optional global URL prefix, without a leading slash (e.g. `api`).                                    |
 | `APP_ENDPOINT`         | `http://${EXPRESS_HOST}:${EXPRESS_PORT}` (+ `/${EXPRESS_PREFIX}`) | Public REST API URL used in AnonCreds tails file and status list URLs. Must be reachable by wallets. |
