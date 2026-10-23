@@ -10,7 +10,7 @@
 The PC running the Identity Service and the mobile wallet **MUST** be connected to the same Wi-Fi network.
 
 1. Obtain the IP address of your host.
-2. Override the Identity Service's advertised endpoint URLs to use your host IP instead of `localhost`. These are env-var-driven — set `AGENT_HTTP_ENDPOINT`, `AGENT_WS_ENDPOINT`, `AGENT_OID4VCI_ENDPOINT` and `APP_ENDPOINT` (`http://<host-ip>:3000`, for AnonCreds tails files and status lists) in your `.env` (no source edits needed), or set `EXPRESS_HOST=<host-ip>`, which all four default to. See [Setup — Agent Transports](setup.md#agent-transports) for the full list of relevant variables and their defaults. Logos still need an https `FILE_STORAGE_FS_PUBLIC_URL`, because wallets reject plain http logo URLs.
+2. Override the Identity Service's advertised endpoint URLs to use your host IP instead of `localhost`. These are env-var-driven — set `AGENT_HTTP_ENDPOINT`, `AGENT_WS_ENDPOINT`, `AGENT_OID4VCI_ENDPOINT` and `APP_ENDPOINT` (`http://<host-ip>:3000`, for AnonCreds tails files and status lists) in your `.env` (no source edits needed), or set `EXPRESS_HOST=<host-ip>`, which all four default to. When the service runs from the root `docker-compose.yml`, `EXPRESS_HOST` is not passed through: set `IDENTITY_SERVICE_AGENT_HTTP_ENDPOINT`, `IDENTITY_SERVICE_AGENT_WS_ENDPOINT`, `IDENTITY_SERVICE_AGENT_OID4VCI_ENDPOINT` and `IDENTITY_SERVICE_APP_ENDPOINT` in the root `.env` instead. See [Setup — Agent Transports](setup.md#agent-transports) for the full list of relevant variables and their defaults. Logos still need an https `FILE_STORAGE_FS_PUBLIC_URL`, because wallets reject plain http logo URLs.
 3. Run the Identity Service.
 
 ## Solution 2: ngrok + nginx
