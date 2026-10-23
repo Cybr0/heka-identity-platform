@@ -6,7 +6,7 @@ import { Mutex } from 'async-mutex'
 
 import { Agent, AGENT_TOKEN } from 'common/agent'
 import { User, Wallet } from 'common/entities'
-import { InjectLogger, Logger } from 'common/logger'
+import { InjectLogger, Logger, maskSecretsInUrl } from 'common/logger'
 import { getWalletId } from 'utils/auth'
 import { withTenantAgent } from 'utils/multi-tenancy'
 
@@ -34,8 +34,11 @@ export class AuthService {
    * Throws `UnauthorizedException` when the token is missing, invalid, or does not meet the claim contract.
    */
   public async validateRequestToken(request: IncomingMessage): Promise<AuthInfo> {
-    // Bind only the method and URL: the request carries the access token in its headers
-    const logger = this.logger.child('validateRequestToken', { method: request.method, url: request.url })
+    // Bind only the method and the URL with OID4VCI secrets masked: the request carries the access token in its headers
+    const logger = this.logger.child('validateRequestToken', {
+      method: request.method,
+      url: maskSecretsInUrl(request.url),
+    })
     logger.trace('>')
 
     const token = extractTokenFromHeader(request)
@@ -52,7 +55,7 @@ export class AuthService {
    * Returns the token's `exp` (seconds since epoch) so the caller can close the socket when it expires.
    */
   public async validateWebSocketToken(request: IncomingMessage): Promise<{ authInfo: AuthInfo; expiresAt?: number }> {
-    const logger = this.logger.child('validateWebSocketToken', { url: request.url })
+    const logger = this.logger.child('validateWebSocketToken', { url: maskSecretsInUrl(request.url) })
     logger.trace('>')
 
     const token = extractTokenFromProtocolHeader(request) ?? extractTokenFromHeader(request)
