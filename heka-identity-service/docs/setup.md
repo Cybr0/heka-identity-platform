@@ -137,17 +137,25 @@ yarn build
 
 ## Docker
 
-To build the image locally:
+`docker-compose.yml` in this directory runs the identity service and its Postgres on their own; the OIDC provider (and anything else) is expected on the host and reached through `host.docker.internal`. Values come from this directory's `.env`, under the same names `yarn start` uses, and default to the dev Keycloak of the root project. One difference from `yarn start`: a URL the service itself calls must not say `localhost`, which inside the container is the container. Leave `OIDC_JWKS_URI` and `DEMO_TOKEN_URL` unset to get the compose file's `host.docker.internal` defaults, or set them to `http://host.docker.internal:8080/...` yourself; the browser-facing `OIDC_ISSUER_URL` stays on `localhost`.
+
+The image does not contain your `.env` (`.dockerignore` keeps it out of the build context, so no secret is baked into `heka-identity-service:latest`); inside the container only the variables of the compose file's `environment` block are set. A variable the compose file does not pass, for example `HEDERA_OPERATOR_ID` / `HEDERA_OPERATOR_KEY` or the `INDY_*` endorser values, falls back to the service default. To use your own value in the container, add the variable to the `environment` block (`HEDERA_OPERATOR_KEY: ${HEDERA_OPERATOR_KEY:-}` reads it from `.env` for substitution).
+
+The compose file holds no database password: set `MIKRO_ORM_PASSWORD` in `.env`, or Compose refuses to start. Postgres takes it when it first creates the database, and the service uses it for the app data and the wallets alike; after changing it, recreate the `postgres` container. Postgres is published on `127.0.0.1:5432` only, so a host-run `yarn start` can use it but other devices on the network cannot.
+
+To build the image and run it:
 
 ```shell
-docker compose -f docker-compose.dev.yml build
+docker compose up -d --build
 ```
 
-To run the service in Docker:
+To run the image named by `IMAGE` in `.env` without building:
 
 ```shell
-docker compose -f docker-compose.dev.yml up -d
+docker compose up -d
 ```
+
+To run the whole platform, Keycloak included, use the Compose project at the repository root instead (`docker-compose.yml` and `.env.example` there). The two scopes share host ports, so run one or the other. For just the dev Keycloak next to a host-run identity service: at the repository root copy `.env.example` to `.env` once (Compose validates every variable of the file, even for one service; the defaults are enough for Keycloak alone), then `docker compose --profile keycloak up -d keycloak`.
 
 ## Run the app
 
@@ -173,11 +181,11 @@ yarn test
 ## CORS Configuration
 
 Cross-Origin Resource Sharing (CORS) controls which browser origins are permitted to call the Heka Identity Service API.
-CORS is **disabled by default** — it must be explicitly opted in via environment variables.
+CORS is **enabled by default** (with `Access-Control-Allow-Origin: *`) so that the Web UI works out of the box in local setups. Disable it, or restrict the allowed origins, via environment variables.
 
 | Variable               | Description                                                                                                                                                                                    | Default |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `EXPRESS_ENABLE_CORS`  | Set to `true` to enable CORS. Any other value (including unset) disables it.                                                                                                                   | `false` |
+| `EXPRESS_ENABLE_CORS`  | Set to `false` (or any non-empty value other than `true`) to disable CORS. Unset or empty enables it.                                                                                          | `true`  |
 | `EXPRESS_CORS_OPTIONS` | JSON string of [CORS options](https://github.com/expressjs/cors#configuration-options) passed directly to `app.enableCors()`. Must be valid JSON; invalid JSON crashes on startup (fail-fast). | `{}`    |
 
 > **Security warning:** Enabling CORS without setting an `origin` inside `EXPRESS_CORS_OPTIONS` defaults to `Access-Control-Allow-Origin: *`.
@@ -236,13 +244,16 @@ Real deployments should set `NODE_ENV=production` explicitly: an unset `NODE_ENV
 
 ### HTTP server (Express)
 
-| Variable               | Default     | Description                                                 |
-| ---------------------- | ----------- | ----------------------------------------------------------- |
-| `EXPRESS_HOST`         | `localhost` | Host the server binds to.                                   |
-| `EXPRESS_PORT`         | `3000`      | Port for the REST API and Swagger UI.                       |
-| `EXPRESS_PREFIX`       | _(unset)_   | Optional global URL prefix (e.g. `/api`).                   |
-| `EXPRESS_ENABLE_CORS`  | `true`      | Enable CORS handling.                                       |
-| `EXPRESS_CORS_OPTIONS` | `{}`        | JSON-encoded options passed to the Express CORS middleware. |
+| Variable               | Default                                                           | Description                                                                                          |
+| ---------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `EXPRESS_HOST`         | `localhost`                                                       | Host in the default URLs (`APP_ENDPOINT`, `AGENT_*_ENDPOINT`); servers listen on all interfaces.     |
+| `EXPRESS_PORT`         | `3000`                                                            | Port for the REST API and Swagger UI.                                                                |
+| `EXPRESS_PREFIX`       | _(unset)_                                                         | Optional global URL prefix, without a leading slash (e.g. `api`).                                    |
+| `APP_ENDPOINT`         | `http://${EXPRESS_HOST}:${EXPRESS_PORT}` (+ `/${EXPRESS_PREFIX}`) | Public REST API URL used in AnonCreds tails file and status list URLs. Must be reachable by wallets. |
+| `EXPRESS_ENABLE_CORS`  | `true`                                                            | Enable CORS handling.                                                                                |
+| `EXPRESS_CORS_OPTIONS` | `{}`                                                              | JSON-encoded options passed to the Express CORS middleware.                                          |
+
+`APP_ENDPOINT` falls back to the default only when it is unset: an empty `APP_ENDPOINT=` is used as is and produces relative URLs, so leave the variable out instead.
 
 ### Agent transports
 
@@ -475,7 +486,7 @@ Webhook deliveries always connect directly to the validated address and ignore `
 
 `WEBHOOK_ALLOW_PRIVATE_ADDRESSES` only relaxes the address and hostname rules. The scheme rule, the credential check, the redirect prohibition, the timeout and the response size cap always apply.
 
-To deliver notifications to a local sink or to a sibling Compose container, enable both settings, for example in `.env` (loaded by `yarn start` and used by `docker compose -f docker-compose.dev.yml` for variable substitution):
+To deliver notifications to a local sink or to a sibling Compose container, enable both settings, for example in `.env` (loaded by `yarn start` and used by `docker compose` for variable substitution):
 
 ```dotenv
 WEBHOOK_ALLOW_HTTP=true
