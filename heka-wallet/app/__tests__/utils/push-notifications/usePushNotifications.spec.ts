@@ -148,7 +148,7 @@ describe('usePushNotifications', () => {
     expect(onTokenRefresh).not.toHaveBeenCalled()
   })
 
-  it('does nothing when push is not supported (no Firebase config or iOS)', () => {
+  it('does nothing when push is not supported (no Firebase config)', () => {
     mockFunction(isPushNotificationsSupported).mockReturnValue(false)
     givenWallet()
 

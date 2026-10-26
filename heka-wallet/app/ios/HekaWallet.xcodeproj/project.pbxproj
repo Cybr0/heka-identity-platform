@@ -234,6 +234,7 @@
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
+				4E1A2B3C4D5E6F7081920B01 /* [Heka] Copy GoogleService-Info.plist if present */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				433E774026557E1B00F569EE /* Embed Frameworks */,
 				7081DA1B03AA1A9C2CFF6530 /* [CP] Embed Pods Frameworks */,
@@ -309,6 +310,21 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		4E1A2B3C4D5E6F7081920B01 /* [Heka] Copy GoogleService-Info.plist if present */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "[Heka] Copy GoogleService-Info.plist if present";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# GoogleService-Info.plist is gitignored and optional: without it the app builds without Firebase (push off)\nPLIST=\"${SRCROOT}/HekaWallet/GoogleService-Info.plist\"\nif [ -f \"$PLIST\" ]; then\n  cp \"$PLIST\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GoogleService-Info.plist\"\nelse\n  echo \"warning: HekaWallet/GoogleService-Info.plist not found - building without Firebase, push notifications off\"\nfi\n";
+		};
 		00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;

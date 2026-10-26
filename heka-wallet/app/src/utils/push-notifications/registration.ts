@@ -2,10 +2,13 @@ import type { HekaWalletAgent } from '../agent'
 
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { getApps } from '@react-native-firebase/app'
-import { getMessaging, getToken } from '@react-native-firebase/messaging'
+import {
+  getMessaging,
+  getToken,
+  isDeviceRegisteredForRemoteMessages,
+  registerDeviceForRemoteMessages,
+} from '@react-native-firebase/messaging'
 import { Platform } from 'react-native'
-
-export const PUSH_DEVICE_PLATFORM = 'android'
 
 // Set while the mediator may hold this device's token, so turning push off is retried until it succeeds
 const DEVICE_TOKEN_REGISTERED_KEY = 'PUSH_DEVICE_TOKEN_REGISTERED'
@@ -14,11 +17,16 @@ const DEVICE_TOKEN_REGISTERED_KEY = 'PUSH_DEVICE_TOKEN_REGISTERED'
 export type ShouldSend = () => boolean
 
 /**
- * Push notifications are set up for Android only (React Native Firebase is not linked on iOS),
- * and only when the build has a Firebase config (`android/app/google-services.json`).
+ * Push notifications work only when the build has a Firebase config (`android/app/google-services.json`,
+ * `ios/HekaWallet/GoogleService-Info.plist`); both are optional. iOS is configured but has not been built yet.
  */
 export function isPushNotificationsSupported(): boolean {
-  return Platform.OS === 'android' && getApps().length > 0
+  return (Platform.OS === 'android' || Platform.OS === 'ios') && getApps().length > 0
+}
+
+// Sent to the mediator as `device_platform`
+function devicePlatform(): string {
+  return Platform.OS === 'ios' ? 'ios' : 'android'
 }
 
 export async function isDeviceTokenRegistered(): Promise<boolean> {
@@ -49,7 +57,7 @@ async function sendDeviceToken(
     await agent.modules.pushNotificationsFcm.setDeviceInfo({
       connectionId: mediator.connectionId,
       // RFC 0734: token and platform are both set, or both null to remove the device
-      deviceInfo: { deviceToken, devicePlatform: deviceToken ? PUSH_DEVICE_PLATFORM : null },
+      deviceInfo: { deviceToken, devicePlatform: deviceToken ? devicePlatform() : null },
     })
     await AsyncStorage.setItem(DEVICE_TOKEN_REGISTERED_KEY, String(deviceToken !== null))
     logger.info(`Push notifications: device token ${deviceToken ? 'registered with' : 'removed from'} the mediator`)
@@ -75,7 +83,13 @@ export async function registerDeviceToken(
   let deviceToken = token
   if (!deviceToken) {
     try {
-      deviceToken = await getToken(getMessaging())
+      const messaging = getMessaging()
+      // iOS: automatic APNs registration is off (`app/firebase.json`) — on a build without the Firebase plist it
+      // would hand the APNs token to an unconfigured Firebase; register here, where Firebase is known to exist
+      if (Platform.OS === 'ios' && !isDeviceRegisteredForRemoteMessages(messaging)) {
+        await registerDeviceForRemoteMessages(messaging)
+      }
+      deviceToken = await getToken(messaging)
     } catch (error) {
       agent.config.logger.error(`Push notifications: getting the FCM token failed: ${errorMessage(error)}`)
       return false

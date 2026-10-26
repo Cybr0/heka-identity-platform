@@ -20,18 +20,20 @@ require File.join(File.dirname(`node --print "require.resolve('expo/package.json
 platform :ios, '16.0'
 prepare_react_native_project!
 
-linkage = ENV['USE_FRAMEWORKS']
-if linkage != nil
-  Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green
-  use_frameworks! :linkage => linkage.to_sym
-end
+# React Native Firebase needs frameworks. v25 (old architecture) uses CocoaPods Firebase and
+# supports static linkage via $RNFirebaseAsStaticFramework; v27+ needs SPM and dynamic linkage.
+linkage = ENV['USE_FRAMEWORKS'] || 'static'
+Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green
+use_frameworks! :linkage => linkage.to_sym
+$RNFirebaseAsStaticFramework = (linkage == 'static')
 
 target 'HekaWallet' do
   use_expo_modules!
   config = use_native_modules!
 
   setup_permissions([
-    'Camera'
+    'Camera',
+    'Notifications'
   ])
 
 

@@ -1,5 +1,5 @@
 import { getApps } from '@react-native-firebase/app'
-import { getToken } from '@react-native-firebase/messaging'
+import { getToken, registerDeviceForRemoteMessages } from '@react-native-firebase/messaging'
 import { Platform } from 'react-native'
 
 import { mockFunction } from '../../../../jest-helpers/helpers'
@@ -16,6 +16,8 @@ jest.mock('@react-native-firebase/app', () => ({ getApps: jest.fn() }))
 jest.mock('@react-native-firebase/messaging', () => ({
   getMessaging: jest.fn(() => ({})),
   getToken: jest.fn(),
+  isDeviceRegisteredForRemoteMessages: jest.fn(() => false),
+  registerDeviceForRemoteMessages: jest.fn(async () => undefined),
 }))
 
 const MEDIATOR_CONNECTION_ID = 'mediator-connection-id'
@@ -136,10 +138,39 @@ describe('push notifications registration', () => {
     expect(agent.modules.pushNotificationsFcm.setDeviceInfo).not.toHaveBeenCalled()
   })
 
-  it('is not supported on iOS and never touches Firebase there', () => {
+  it('on iOS registers with APNs first and sends the token with platform ios', async () => {
     Platform.OS = 'ios'
+    const { agent, hekaAgent } = createAgent()
+
+    await expect(registerDeviceToken(hekaAgent)).resolves.toBe(true)
+
+    expect(registerDeviceForRemoteMessages).toHaveBeenCalled()
+    expect(mockFunction(registerDeviceForRemoteMessages).mock.invocationCallOrder[0]).toBeLessThan(
+      mockFunction(getToken).mock.invocationCallOrder[0]
+    )
+    expect(agent.modules.pushNotificationsFcm.setDeviceInfo).toHaveBeenCalledWith({
+      connectionId: MEDIATOR_CONNECTION_ID,
+      deviceInfo: { deviceToken: FCM_TOKEN, devicePlatform: 'ios' },
+    })
+  })
+
+  it('on Android does not register with APNs', async () => {
+    const { hekaAgent } = createAgent()
+
+    await registerDeviceToken(hekaAgent)
+
+    expect(registerDeviceForRemoteMessages).not.toHaveBeenCalled()
+  })
+
+  it('is not supported on iOS without a Firebase config and does nothing there', async () => {
+    Platform.OS = 'ios'
+    mockFunction(getApps).mockReturnValue([])
+    const { agent, hekaAgent } = createAgent()
 
     expect(isPushNotificationsSupported()).toBe(false)
-    expect(getApps).not.toHaveBeenCalled()
+    await expect(registerDeviceToken(hekaAgent)).resolves.toBe(false)
+
+    expect(registerDeviceForRemoteMessages).not.toHaveBeenCalled()
+    expect(agent.modules.pushNotificationsFcm.setDeviceInfo).not.toHaveBeenCalled()
   })
 })
