@@ -20,9 +20,10 @@ const MDL_NAMESPACE = 'org.iso.18013.5.1'
 
 /**
  * Issues an `mso_mdoc` credential through the service over OID4VCI and checks that a holder on the same
- * Credo version can decode and verify it, then presents it back to the service verifier over OID4VP (DCQL).
- * The mdoc / COSE wire format changes between Credo releases, so this fails if the service produces an
- * mdoc that the holder or the verifier cannot decode.
+ * Credo version can decode and verify it (and rejects it against an untrusted certificate), then presents it
+ * back to the service verifier over OID4VP (DCQL) with selective disclosure. Issuer, holder and verifier share
+ * one Credo copy, so this covers the service's mdoc mapping and the same-version round trip, not wire-format
+ * compatibility between Credo releases.
  */
 describe('E2E mso_mdoc issuance and presentation', () => {
   let ormSchemaGenerator: SchemaGenerator
