@@ -125,6 +125,16 @@ describe('E2E mso_mdoc issuance and presentation', () => {
       isValid: true,
     })
 
+    // The same mdoc must be rejected when only an unrelated certificate is trusted.
+    const untrustedKey = await holder.kms.createKey({ type: { kty: 'EC', crv: 'P-256' } })
+    const untrustedCertificate = await holder.x509.createCertificate({
+      authorityKey: Kms.PublicJwk.fromPublicJwk(untrustedKey.publicJwk),
+      issuer: 'CN=Untrusted mDL issuer',
+    })
+    await expect(
+      holder.mdoc.verify(mdoc, { trustedCertificates: [untrustedCertificate.toString('base64')] }),
+    ).resolves.toMatchObject({ isValid: false })
+
     await holder.mdoc.store({ record: mdocRecord })
 
     // Present
