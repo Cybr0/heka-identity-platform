@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useMdocRecords, useSdJwtVcRecords, useW3cCredentialRecords } from '../contexts'
 import { useHekaAgent } from '../utils/agent'
 
+import { mapRecordsSkippingFailures } from './mapRecordsSkippingFailures'
 import { mapCredentialRecord } from './mappers'
 import { Credential, CredentialRecord } from './types'
 
@@ -97,7 +98,12 @@ export const useCredentials = (maxCount?: number): CredentialsState => {
         credentialRecords = credentialRecords.slice(0, maxCount)
       }
 
-      const credentialsData = await Promise.all(credentialRecords.map((record) => mapCredentialRecord(record, agent)))
+      const credentialsData = await mapRecordsSkippingFailures(
+        credentialRecords,
+        (record) => mapCredentialRecord(record, agent),
+        agent.config.logger,
+        'Credential list'
+      )
       setCredentials(credentialsData)
     } catch (e) {
       console.error(e)
