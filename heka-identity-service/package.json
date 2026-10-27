@@ -146,7 +146,7 @@
     "js-yaml": "^4.2.0",
     "bn.js": "^5.2.3",
     "vite": "^6.4.3",
-    "@owf/mdoc": "0.8.1"
+    "@owf/mdoc@npm:^0.8.1": "0.8.1"
   },
   "packageManager": "yarn@4.16.0"
 }

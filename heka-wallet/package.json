@@ -111,7 +111,7 @@
     "bn.js@npm:5.1.1": "5.2.3",
     "bn.js@npm:5.2.1": "5.2.3",
     "elliptic@npm:6.5.4": "6.6.1",
-    "@owf/mdoc": "0.8.1"
+    "@owf/mdoc@npm:^0.8.1": "0.8.1"
   },
   "packageManager": "yarn@4.16.0"
 }
