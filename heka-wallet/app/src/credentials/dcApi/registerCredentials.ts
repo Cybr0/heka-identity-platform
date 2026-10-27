@@ -7,7 +7,6 @@ import { DateOnly, MdocNameSpaces, MdocRecord, SdJwtVcRecord } from '@credo-ts/c
 import { Platform } from 'react-native'
 
 import { HekaWalletAgent } from '../../utils/agent'
-import { mapRecordsSkippingFailures } from '../mapRecordsSkippingFailures'
 import { mapCredentialRecord } from '../mappers/credential'
 import { humanizeAttributeName } from '../mappers/humanize'
 import { CredentialRecord } from '../types'
@@ -62,22 +61,10 @@ export async function dcApiRegisterCredentials(
   try {
     const [mdocRecords, sdJwtVcRecords] = await Promise.all([agent.mdoc.getAll(), agent.sdJwtVc.getAll()])
 
-    // A record that cannot be read is left out instead of failing the registration of all others.
-    const [mdocItems, sdJwtItems] = await Promise.all([
-      mapRecordsSkippingFailures(
-        mdocRecords,
-        (record) => buildMdocCredentialItem(agent, record, resolvedLabels),
-        agent.config.logger,
-        'Digital Credentials API registration'
-      ),
-      mapRecordsSkippingFailures(
-        sdJwtVcRecords,
-        (record) => buildSdJwtCredentialItem(agent, record, resolvedLabels),
-        agent.config.logger,
-        'Digital Credentials API registration'
-      ),
+    const credentials = await Promise.all([
+      ...mdocRecords.map((record) => buildMdocCredentialItem(agent, record, resolvedLabels)),
+      ...sdJwtVcRecords.map((record) => buildSdJwtCredentialItem(agent, record, resolvedLabels)),
     ])
-    const credentials = [...mdocItems, ...sdJwtItems]
 
     agent.config.logger.trace('Registering credentials for the Digital Credentials API', {
       count: credentials.length,
