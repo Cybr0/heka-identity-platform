@@ -173,28 +173,29 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@credo-ts/anoncreds@npm:0.7.2":
-  version: 0.7.2
-  resolution: "@credo-ts/anoncreds@npm:0.7.2"
+"@credo-ts/anoncreds@npm:0.7.3":
+  version: 0.7.3
+  resolution: "@credo-ts/anoncreds@npm:0.7.3"
   dependencies:
     "@astronautlabs/jsonpath": "npm:^1.1.2"
-    "@credo-ts/core": "npm:0.7.2"
-    "@credo-ts/didcomm": "npm:0.7.2"
+    "@credo-ts/core": "npm:0.7.3"
+    "@credo-ts/didcomm": "npm:0.7.3"
     "@sphereon/pex-models": "npm:^2.3.2"
     class-transformer: "npm:0.5.1"
     class-validator: "npm:^0.14.3"
     reflect-metadata: "npm:0.2.2"
   peerDependencies:
     "@hyperledger/anoncreds-shared": ^0.4.0
-  checksum: 10c0/4a1a9d081292f015b262f78b483a635f4c03b8352aa9844aa14ba36298a6e28a18bf93245ae5ab1488ff28f154997427f6e0e53b2d48047d95a3db01146c892a
+  checksum: 10c0/4039c91dbf4005206eade88786b63fdfae5ca4085a12425342eeebe4984ff5a1428e866e928d14adfcb9093da14709f3bc3e459a1c5c96704fda71e6e4de4f19
   languageName: node
   linkType: hard
 
-"@credo-ts/askar@npm:0.7.2":
-  version: 0.7.2
-  resolution: "@credo-ts/askar@npm:0.7.2"
+"@credo-ts/askar@npm:0.7.3":
+  version: 0.7.3
+  resolution: "@credo-ts/askar@npm:0.7.3"
   dependencies:
-    "@credo-ts/core": "npm:0.7.2"
+    "@credo-ts/core": "npm:0.7.3"
+    "@noble/curves": "npm:^2.0.1"
     "@panva/hpke-noble": "npm:^1.1.4"
     class-transformer: "npm:0.5.1"
     class-validator: "npm:^0.14.3"
@@ -203,13 +204,13 @@ __metadata:
     tsyringe: "npm:^4.10.0"
   peerDependencies:
     "@openwallet-foundation/askar-shared": ^0.4.3 || ^0.5.0 || ^0.6.0
-  checksum: 10c0/809a4f0f3cf0f7b5e8fc88799abe8e15ba8a82650f20a50e611313df4f7ec1c9c63acc5c7f5032bebb2dc281e13e0d4a9945960eeb21b2c0a5572c013f679e4a
+  checksum: 10c0/2b85cbb098ab2be47c1ca31a4c82c2f9f4875f8771164c485c35515eb11dd0e99b8e0c29e21f374a4e8f62e5ed11b1583393336036ff1050849851c8194c5441
   languageName: node
   linkType: hard
 
-"@credo-ts/core@npm:0.7.2":
-  version: 0.7.2
-  resolution: "@credo-ts/core@npm:0.7.2"
+"@credo-ts/core@npm:0.7.3":
+  version: 0.7.3
+  resolution: "@credo-ts/core@npm:0.7.3"
   dependencies:
     "@animo-id/pex": "npm:^6.1.1"
     "@astronautlabs/jsonpath": "npm:^1.1.2"
@@ -253,30 +254,30 @@ __metadata:
     web-did-resolver: "npm:^2.0.32"
     webcrypto-core: "npm:^1.8.1"
     zod: "npm:^4.6.5"
-  checksum: 10c0/67916bba1f4a7f9d1a74f21b5689985fdcd033bc3d06182a60c734c831ef88eddfc83a0e760f6e122e0838f29d16ddc088249609f430e6b807c9f57989aa33a6
+  checksum: 10c0/5c6d351fa9dcea5effbdaecbcf2f442e6f7e5001abc69e247c554c6dba092e928ef446076b08443f9411a7a64129a055b2a0ebb1dccec937552ae9c61ad267de
   languageName: node
   linkType: hard
 
-"@credo-ts/didcomm@npm:0.7.2":
-  version: 0.7.2
-  resolution: "@credo-ts/didcomm@npm:0.7.2"
+"@credo-ts/didcomm@npm:0.7.3":
+  version: 0.7.3
+  resolution: "@credo-ts/didcomm@npm:0.7.3"
   dependencies:
-    "@credo-ts/core": "npm:0.7.2"
+    "@credo-ts/core": "npm:0.7.3"
     class-transformer: "npm:0.5.1"
     class-validator: "npm:^0.14.3"
     luxon: "npm:^3.7.2"
     query-string: "npm:^9.3.1"
     rxjs: "npm:^7.8.2"
-  checksum: 10c0/47d6d89679acd6d6aec460c37ed84d0ec9828183dfd1d90140153eab63bfb58f2bcefe78f897db5cca5b5cf09e3878e03f431bc4194f53b42997bfcd06675e96
+  checksum: 10c0/a5a16b5e8147d1f1e9d1e67396c6e94119c1b5ad5ebcc357b2c92bcd8afeb92790be695fb6068da8d013da778ed1439004fdb4a2c06623f11cde377b2caa54a9
   languageName: node
   linkType: hard
 
-"@credo-ts/hedera@npm:0.7.2":
-  version: 0.7.2
-  resolution: "@credo-ts/hedera@npm:0.7.2"
+"@credo-ts/hedera@npm:0.7.3":
+  version: 0.7.3
+  resolution: "@credo-ts/hedera@npm:0.7.3"
   dependencies:
-    "@credo-ts/anoncreds": "npm:0.7.2"
-    "@credo-ts/core": "npm:0.7.2"
+    "@credo-ts/anoncreds": "npm:0.7.3"
+    "@credo-ts/core": "npm:0.7.3"
     "@hashgraph/sdk": "npm:^2.80.0"
     "@hiero-did-sdk/anoncreds": "npm:^0.1.8"
     "@hiero-did-sdk/cache": "npm:^0.1.8"
@@ -287,28 +288,28 @@ __metadata:
     "@hiero-did-sdk/registrar": "npm:^0.1.8"
     "@hiero-did-sdk/resolver": "npm:^0.1.8"
     buffer: "npm:^6.0.3"
-  checksum: 10c0/8c66db1a0e061b58c77dc0f6e84895cb0736f94bef99d6151c1879e10392188310f475477aaee52b5dadceddb259b7e0a0654d9adb2501b12ccbc106cecba943
+  checksum: 10c0/7c3be9ffff665a091f46644ff989dc2193b061a0b8142ed054dd031df941eef91a033c236cbc8badfa99e87e9330aab2b19b8e606b422e37ef8f0bdc9c003870
   languageName: node
   linkType: hard
 
-"@credo-ts/indy-vdr@npm:0.7.2":
-  version: 0.7.2
-  resolution: "@credo-ts/indy-vdr@npm:0.7.2"
+"@credo-ts/indy-vdr@npm:0.7.3":
+  version: 0.7.3
+  resolution: "@credo-ts/indy-vdr@npm:0.7.3"
   dependencies:
-    "@credo-ts/anoncreds": "npm:0.7.2"
-    "@credo-ts/core": "npm:0.7.2"
+    "@credo-ts/anoncreds": "npm:0.7.3"
+    "@credo-ts/core": "npm:0.7.3"
   peerDependencies:
     "@hyperledger/indy-vdr-shared": ^0.3.0
-  checksum: 10c0/6488bdf8edf1e8a10f95d903558e95b67893f63f394b1782696029564f1c1fda5b8cb62ead64726f034a41df3551810394854a7e3924e564b64b3f7bd457adc4
+  checksum: 10c0/2b9a5b1d026cb34d665c8f335198fd8163fd0b791f0c6ef4d4b341040700dc6834b3fe48b6061782c89f03aec450c8d9c389476bfa3bc9de7988f29f31d7c87b
   languageName: node
   linkType: hard
 
-"@credo-ts/node@npm:0.7.2":
-  version: 0.7.2
-  resolution: "@credo-ts/node@npm:0.7.2"
+"@credo-ts/node@npm:0.7.3":
+  version: 0.7.3
+  resolution: "@credo-ts/node@npm:0.7.3"
   dependencies:
-    "@credo-ts/core": "npm:0.7.2"
-    "@credo-ts/didcomm": "npm:0.7.2"
+    "@credo-ts/core": "npm:0.7.3"
+    "@credo-ts/didcomm": "npm:0.7.3"
     "@types/express": "npm:^5.0.6"
     "@types/node": "npm:^20.19.31"
     "@types/ws": "npm:^8.18.1"
@@ -316,15 +317,15 @@ __metadata:
     hpke: "npm:^1.1.4"
     rxjs: "npm:^7.8.2"
     ws: "npm:^8.19.0"
-  checksum: 10c0/16728d426ff53adbf6a7256a6beb9690d3b1ebfb4068d21cebcb4b555a43d7fb4f5e8dd1580e57e72e3c87d48d726ba342d5e6c927ea22024c00fbd63b8c03a8
+  checksum: 10c0/a6d1c8f1fcf686c079a051454d320b5c79310240a63b6b54f57200d34397a18e5db840c2d68b4a0bb9cbcf6b84403493ffb14acae49c98785ba829e30ec9b47e
   languageName: node
   linkType: hard
 
-"@credo-ts/openid4vc@npm:0.7.2":
-  version: 0.7.2
-  resolution: "@credo-ts/openid4vc@npm:0.7.2"
+"@credo-ts/openid4vc@npm:0.7.3":
+  version: 0.7.3
+  resolution: "@credo-ts/openid4vc@npm:0.7.3"
   dependencies:
-    "@credo-ts/core": "npm:0.7.2"
+    "@credo-ts/core": "npm:0.7.3"
     "@openid4vc/oauth2": "npm:^0.6.0"
     "@openid4vc/openid4vci": "npm:^0.6.0"
     "@openid4vc/openid4vp": "npm:^0.6.0"
@@ -334,18 +335,18 @@ __metadata:
     express: "npm:^5.2.1"
     rxjs: "npm:^7.8.2"
     zod: "npm:^4.6.5"
-  checksum: 10c0/d00e30893eb90df5f9be10966121b160d84b003ad71d099bedfa40c0686114513abdc2121b69ad661018615b16f49f06607d483ab0ae2a3c9e5dee91b2e04aa2
+  checksum: 10c0/5b66fbb8f9a6b17536bde17b8c443c3c789723453f02338c7a474a56aa3f96b232afe147594e030b6a38f7387fd639cb9046c8776c819b563181c129db711406
   languageName: node
   linkType: hard
 
-"@credo-ts/tenants@npm:0.7.2":
-  version: 0.7.2
-  resolution: "@credo-ts/tenants@npm:0.7.2"
+"@credo-ts/tenants@npm:0.7.3":
+  version: 0.7.3
+  resolution: "@credo-ts/tenants@npm:0.7.3"
   dependencies:
-    "@credo-ts/core": "npm:0.7.2"
-    "@credo-ts/didcomm": "npm:0.7.2"
+    "@credo-ts/core": "npm:0.7.3"
+    "@credo-ts/didcomm": "npm:0.7.3"
     async-mutex: "npm:^0.5.0"
-  checksum: 10c0/03f1ec60b9185375299edecbdf4190000dfc16b6129bea05bae3954d3a36bbd33c50020cd652eefae3663f75a90844d4fe88ba706394c967ec507f095fb9ff45
+  checksum: 10c0/ac567f25805c10fc51e0a51b9e43efe96d39b9fee8ec8061fa0fb009cbe0fe623a268f80b6529673276ebe609c9a567b92c372dec5332cd6d919e1bccad97d2d
   languageName: node
   linkType: hard
 
@@ -6019,15 +6020,15 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "heka-identity-service@workspace:."
   dependencies:
-    "@credo-ts/anoncreds": "npm:0.7.2"
-    "@credo-ts/askar": "npm:0.7.2"
-    "@credo-ts/core": "npm:0.7.2"
-    "@credo-ts/didcomm": "npm:0.7.2"
-    "@credo-ts/hedera": "npm:0.7.2"
-    "@credo-ts/indy-vdr": "npm:0.7.2"
-    "@credo-ts/node": "npm:0.7.2"
-    "@credo-ts/openid4vc": "npm:0.7.2"
-    "@credo-ts/tenants": "npm:0.7.2"
+    "@credo-ts/anoncreds": "npm:0.7.3"
+    "@credo-ts/askar": "npm:0.7.3"
+    "@credo-ts/core": "npm:0.7.3"
+    "@credo-ts/didcomm": "npm:0.7.3"
+    "@credo-ts/hedera": "npm:0.7.3"
+    "@credo-ts/indy-vdr": "npm:0.7.3"
+    "@credo-ts/node": "npm:0.7.3"
+    "@credo-ts/openid4vc": "npm:0.7.3"
+    "@credo-ts/tenants": "npm:0.7.3"
     "@digitalcredentials/bitstring": "npm:3.1.2"
     "@eslint/js": "npm:^10.0.1"
     "@golevelup/ts-vitest": "npm:^0.5.2"
