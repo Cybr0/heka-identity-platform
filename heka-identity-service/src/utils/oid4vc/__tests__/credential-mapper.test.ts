@@ -2,16 +2,15 @@ import { AgentContext, ClaimFormat, Kms, SdJwtVcPayload, X509Certificate } from 
 import { OpenId4VciCredentialFormatProfile, OpenId4VciCredentialRequestToCredentialMapper } from '@credo-ts/openid4vc'
 import { createMock } from '@golevelup/ts-vitest'
 
-import { INSECURE_DEFAULTS } from 'config/insecure-defaults'
+import AgentConfig from 'config/agent'
 
 import { createCredentialRequestToCredentialMapper, CredentialIssuanceMetadata } from '..'
 
 type MapperOptions = Parameters<OpenId4VciCredentialRequestToCredentialMapper>[0]
 
-// Default development mDL issuer certificate (same value as the fallback in config/agent.ts)
-const MDL_ISSUER_CERTIFICATE =
-  'MIIBwDCCAWWgAwIBAgIUSMdjaVc1KHI+3o6qJXhSC4sJh+cwCgYIKoZIzj0EAwIwNTEXMBUGA1UEAwwObURMIElzc3VlciBEZXYxDTALBgNVBAoMBEhla2ExCzAJBgNVBAYTAlVTMB4XDTI2MDMyNzIxNDA1NloXDTM2MDMyNDIxNDA1NlowNTEXMBUGA1UEAwwObURMIElzc3VlciBEZXYxDTALBgNVBAoMBEhla2ExCzAJBgNVBAYTAlVTMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1nIrm3O9VX8MdPrKWMhqqV0QMS4UtxKj6uUc8IdGE2fSsWyi7XQN3HoE1Ln9TDtOIHvSyW8Eyr98MlWGBBF/vqNTMFEwHQYDVR0OBBYEFNfkrHxd2nwtni96XrrYhaMgUFImMB8GA1UdIwQYMBaAFNfkrHxd2nwtni96XrrYhaMgUFImMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhAP0V5EW7j6Pb+lJktzdWrtEqhI3mYs9Fd+qh0p2kNXJPAiEAqK+q7Wk+t5e2yzvO3b6t3P5nIEnoQt3cvDsaUZY1dT0='
-const MDL_ISSUER_PRIVATE_KEY_JWK = JSON.parse(INSECURE_DEFAULTS.MDL_ISSUER_PRIVATE_KEY) as Record<string, string>
+// Development mDL issuer certificate and key from the agent config defaults
+const { mdlIssuerCertificate: MDL_ISSUER_CERTIFICATE, mdlIssuerPrivateKeyJwk: MDL_ISSUER_PRIVATE_KEY_JWK } =
+  AgentConfig()
 
 const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
