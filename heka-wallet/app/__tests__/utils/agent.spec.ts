@@ -449,6 +449,31 @@ describe('Agent utils', () => {
       expect(findDefaultMediator).toHaveBeenCalledTimes(4)
     })
 
+    it('starts a new background setup when it is requested again after the previous one succeeded', async () => {
+      jest.useFakeTimers()
+      const { mockAgent, agent } = createMockAgent()
+      const { findDefaultMediator } = mockAgent.didcomm.mediationRecipient
+      const firstCallback = jest.fn()
+      const secondCallback = jest.fn()
+      findDefaultMediator.mockRejectedValueOnce(new Error('Mediator is not reachable'))
+
+      // First background setup succeeds on its first attempt
+      await trySetupMediator(agent, mediatorInvitationUrl, firstCallback)
+      await jest.advanceTimersByTimeAsync(5000)
+      expect(firstCallback).toHaveBeenCalledTimes(1)
+      expect(jest.getTimerCount()).toBe(0)
+
+      // A later immediate attempt fails again, so a new background setup is started
+      findDefaultMediator.mockRejectedValueOnce(new Error('Mediator is not reachable'))
+      await trySetupMediator(agent, mediatorInvitationUrl, secondCallback)
+      expect(jest.getTimerCount()).toBe(1)
+
+      await jest.advanceTimersByTimeAsync(5000)
+      expect(findDefaultMediator).toHaveBeenCalledTimes(4)
+      expect(secondCallback).toHaveBeenCalledTimes(1)
+      expect(firstCallback).toHaveBeenCalledTimes(1)
+    })
+
     it('stops the background setup once the agent is shut down', async () => {
       jest.useFakeTimers()
       const { mockAgent, agent } = createMockAgent({ defaultMediator: null })
