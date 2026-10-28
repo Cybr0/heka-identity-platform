@@ -48,7 +48,11 @@ export function usePushNotifications(): void {
 
     const unsubscribe = usePush
       ? onTokenRefresh(getMessaging(), (token) => {
-          registerDeviceToken(agent, token, shouldSend)
+          hasNotificationPermission()
+            .then((allowed) => (allowed ? registerDeviceToken(agent, token, shouldSend) : false))
+            .catch((error: unknown) => {
+              agent.config.logger.error(`Push notifications: token refresh failed: ${String(error)}`)
+            })
         })
       : undefined
 

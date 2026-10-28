@@ -1,6 +1,6 @@
 import { useStore } from '@bifold/core'
 import { onTokenRefresh } from '@react-native-firebase/messaging'
-import { renderHook, waitFor } from '@testing-library/react-native'
+import { act, renderHook, waitFor } from '@testing-library/react-native'
 
 import { mockFunction } from '../../../../jest-helpers/helpers'
 import { useHekaAgent } from '../../../src/utils/agent'
@@ -85,11 +85,35 @@ describe('usePushNotifications', () => {
 
     const { unmount } = renderHook(() => usePushNotifications())
     await waitFor(() => expect(registerDeviceToken).toHaveBeenCalledTimes(1))
-    mockFunction(onTokenRefresh).mock.calls[0][1]('rotated-token')
+    await act(async () => mockFunction(onTokenRefresh).mock.calls[0][1]('rotated-token'))
     unmount()
 
     expect(registerDeviceToken).toHaveBeenLastCalledWith(agent, 'rotated-token', expect.any(Function))
     expect(unsubscribe).toHaveBeenCalled()
+  })
+
+  it('does not register a rotated token once the OS no longer allows notifications', async () => {
+    givenWallet()
+    renderHook(() => usePushNotifications())
+    await waitFor(() => expect(registerDeviceToken).toHaveBeenCalledTimes(1))
+
+    mockFunction(hasNotificationPermission).mockResolvedValue(false)
+    await act(async () => mockFunction(onTokenRefresh).mock.calls[0][1]('rotated-token'))
+
+    expect(registerDeviceToken).toHaveBeenCalledTimes(1)
+    expect(registerDeviceToken).not.toHaveBeenCalledWith(agent, 'rotated-token', expect.any(Function))
+  })
+
+  it('logs instead of throwing when the permission check fails on token rotation', async () => {
+    givenWallet()
+    renderHook(() => usePushNotifications())
+    await waitFor(() => expect(registerDeviceToken).toHaveBeenCalledTimes(1))
+
+    mockFunction(hasNotificationPermission).mockRejectedValue(new Error('permission check failed'))
+    await act(async () => mockFunction(onTokenRefresh).mock.calls[0][1]('rotated-token'))
+
+    expect(registerDeviceToken).toHaveBeenCalledTimes(1)
+    expect(agent.config.logger.error).toHaveBeenCalledWith(expect.stringContaining('permission check failed'))
   })
 
   it('unregisters when push is off and the mediator may still hold the token', async () => {

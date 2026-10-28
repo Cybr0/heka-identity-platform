@@ -28,6 +28,25 @@ describe('CredoLogger', () => {
     expect(logged.data.error.stack).toContain('Could not retrieve revocation status list')
   })
 
+  test('stops at an error that is its own cause', () => {
+    const error = new Error('self-referencing')
+    error.cause = error
+
+    expect(serializeLogData({ error })).toMatchObject({
+      error: { message: 'self-referencing', cause: '[Circular cause]' },
+    })
+  })
+
+  test('stops at a cause that repeats across errors', () => {
+    const first = new Error('first')
+    const second = new Error('second', { cause: first })
+    first.cause = second
+
+    expect(serializeLogData({ error: first })).toMatchObject({
+      error: { message: 'first', cause: { message: 'second', cause: '[Circular cause]' } },
+    })
+  })
+
   test('passes other data through unchanged', () => {
     const data = { revocationRegistryDefinitionId: 'did:indy:test/rev', attempt: 2, nested: { a: 1 } }
 

@@ -4,13 +4,14 @@ import { Logger } from 'common/logger'
 
 type SerializedError = { name: string; message: string; stack?: string; cause?: unknown }
 
-function serializeError(error: Error): SerializedError {
+function serializeError(error: Error, seen = new Set<Error>()): SerializedError {
+  seen.add(error)
   const cause = (error as Error & { cause?: unknown }).cause
   return {
     name: error.name,
     message: error.message,
     stack: error.stack,
-    cause: cause instanceof Error ? serializeError(cause) : cause,
+    cause: cause instanceof Error ? (seen.has(cause) ? '[Circular cause]' : serializeError(cause, seen)) : cause,
   }
 }
 
