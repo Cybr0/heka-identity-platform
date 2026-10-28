@@ -449,6 +449,9 @@ async function connectToMediator(agent: Agent, mediatorInvitationUrl: string): P
     MEDIATION_GRANT_TIMEOUT_MS
   )
   await agent.didcomm.mediationRecipient.setDefaultMediator(mediationRecord)
+  // If pickup failed to start here, a retry would find the default mediator and return, so pickup would start only
+  // on the next agent initialization. With the 'PickUpV2' (polling) strategy this only reads local records and starts
+  // an interval (pickup errors happen inside it), so it is not expected. Revisit if switching to 'PickUpV2LiveMode'.
   await agent.didcomm.mediationRecipient.initiateMessagePickup(mediationRecord)
 }
 
