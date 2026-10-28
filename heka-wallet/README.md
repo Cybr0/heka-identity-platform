@@ -65,7 +65,7 @@ The wallet is configured via environment variables loaded by [`react-native-conf
 |----------------|-------------|-----------|--------------------------------------------------------------------------------------------------------------------------------------------------|
 | `MEDIATOR_URL` | Recommended | _(unset)_ | DIDComm mediator invitation URL. Required for inbound DIDComm. See [DIDComm Mediator](../mediator/README.md) for how to run one and get the URL. |
 
-The mediator setup does not fail wallet initialization. While the mediator is not set up yet, the wallet waits on startup for one setup attempt: up to ~20 s (~35 s with a short invitation URL without `oob`) if the mediator is reachable but slow to respond.
+The mediator setup does not fail wallet initialization. While the mediator is not set up yet, the wallet waits on startup for one setup attempt: up to ~20 s (~35 s with a short invitation URL without `oob`, `c_i` or `d_m`) if the mediator is reachable but slow to respond.
 If the mediator is not reachable (e.g. the device is offline), the wallet starts right away and keeps retrying the mediator setup in background.
 Until the mediator is set up, inbound DIDComm messages are not received.
 
