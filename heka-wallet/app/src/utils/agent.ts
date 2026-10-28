@@ -231,9 +231,27 @@ export async function tryRestartExistingAgent(agent: Agent, credentials: WalletS
   return true
 }
 
+/**
+ * Returns true if DIDComm messages sent to the DID are routed through a mediator.
+ * The public DID created while the mediator was not set up has no routing keys and uses the default queue endpoint.
+ */
+async function isDidRoutedThroughMediator(agent: Agent, did: string): Promise<boolean> {
+  const didDocument = await agent.dids.resolveDidDocument(did)
+  return didDocument.didCommServices.some((service) => (service.routingKeys?.length ?? 0) > 0)
+}
+
+/**
+ * Creates the multi-use public invitation, or returns the existing one.
+ * Call it only once the default mediator is set up (see 'createPublicInvitationWhenMediatorReady'),
+ * otherwise the invitation cannot receive DIDComm messages.
+ *
+ * If the public DID is routed through a mediator, it is used as the invitation DID.
+ * Otherwise (the DID was created while the mediator was not reachable), the invitation uses inline services
+ * with the current routing, that is the default mediator.
+ */
 export async function createPublicInvitationOrGetExisting(
   agent: Agent,
-  invitationDid: string,
+  publicDid: string,
   label: string
 ): Promise<string> {
   const publicInvitationId = await AsyncStorage.getItem(PUBLIC_INVITATION_ID_KEY)
@@ -248,9 +266,16 @@ export async function createPublicInvitationOrGetExisting(
       throw new Error('Public invitation is already created, but corresponding invitation record is not found')
     }
   } else {
+    const usePublicDid = await isDidRoutedThroughMediator(agent, publicDid)
+    if (!usePublicDid) {
+      agent.config.logger.info(
+        'Public DID is not routed through a mediator, creating the public invitation with inline services'
+      )
+    }
+
     publicInvitationRecord = await agent.didcomm.oob.createInvitation({
       label,
-      invitationDid,
+      invitationDid: usePublicDid ? publicDid : undefined,
       multiUseInvitation: true,
     })
 
@@ -258,6 +283,16 @@ export async function createPublicInvitationOrGetExisting(
   }
 
   return publicInvitationRecord.outOfBandInvitation.toUrl({ domain: 'didcomm://invite' })
+}
+
+/**
+ * Creates the public invitation (or returns the existing one) for the wallet's public DID.
+ * Meant to be passed as the 'onMediatorReady' callback of 'trySetupMediator', so the invitation is created only
+ * once the default mediator is set up, during agent startup or later by the background mediator setup.
+ */
+export async function createPublicInvitationWhenMediatorReady(agent: Agent, label: string): Promise<string> {
+  const publicDid = await createPublicDidOrGetExisting(agent)
+  return createPublicInvitationOrGetExisting(agent, publicDid, label)
 }
 
 export async function ensureExampleCredentialCreated(agent: Agent): Promise<void> {
@@ -400,23 +435,56 @@ async function connectToMediator(agent: Agent, mediatorInvitationUrl: string): P
 }
 
 /**
+ * Called once the default mediator is set up, either during agent startup or by the background mediator setup.
+ */
+export type OnMediatorReady = () => Promise<void> | void
+
+async function runOnMediatorReady(agent: Agent, onMediatorReady?: OnMediatorReady): Promise<void> {
+  if (!onMediatorReady) return
+
+  // A callback failure must not break agent startup or the background mediator setup
+  try {
+    await onMediatorReady()
+  } catch (error) {
+    agent.config.logger.error('Failed to run the mediator ready callback', { error })
+  }
+}
+
+/**
  * Tries to set up the mediator without blocking further wallet initialization.
  * If the mediator is not reachable, setup is retried in background.
+ *
+ * 'onMediatorReady' runs once the mediator is set up: before this function returns if the setup succeeds right away,
+ * or later, when the background setup succeeds. Its errors are logged and not rethrown.
  */
-export async function trySetupMediator(agent: Agent, mediatorInvitationUrl: string): Promise<void> {
+export async function trySetupMediator(
+  agent: Agent,
+  mediatorInvitationUrl: string,
+  onMediatorReady?: OnMediatorReady
+): Promise<void> {
   try {
     await setupMediatorIfNeeded(agent, mediatorInvitationUrl)
   } catch (error) {
     agent.config.logger.warn('Failed to set up mediator, will retry in background', { error })
-    setupMediatorInBackground(agent, mediatorInvitationUrl)
+    setupMediatorInBackground(agent, mediatorInvitationUrl, onMediatorReady)
+    return
   }
+
+  await runOnMediatorReady(agent, onMediatorReady)
 }
 
 /**
  * Keeps trying to set up the mediator in background (with exponential backoff) until it succeeds or agent is shut down.
  * Used when the mediator is not reachable on agent initialization (e.g. device is offline or mediator is unavailable).
+ *
+ * 'onMediatorReady' runs once after the setup succeeds. If the background setup for the agent is already running,
+ * the call does nothing, including registering the callback.
  */
-export function setupMediatorInBackground(agent: Agent, mediatorInvitationUrl: string): void {
+export function setupMediatorInBackground(
+  agent: Agent,
+  mediatorInvitationUrl: string,
+  onMediatorReady?: OnMediatorReady
+): void {
   if (agentsWithMediatorSetupInProgress.has(agent)) return
   agentsWithMediatorSetupInProgress.add(agent)
 
@@ -429,13 +497,16 @@ export function setupMediatorInBackground(agent: Agent, mediatorInvitationUrl: s
 
       try {
         await setupMediatorIfNeeded(agent, mediatorInvitationUrl)
-        agentsWithMediatorSetupInProgress.delete(agent)
-        agent.config.logger.info('Mediator is set up')
       } catch (error) {
         const nextDelayMs = Math.min(delayMs * 2, MEDIATOR_SETUP_RETRY_MAX_DELAY_MS)
         agent.config.logger.warn(`Failed to set up mediator, retrying in ${nextDelayMs / 1000}s`, { error })
         scheduleAttempt(nextDelayMs)
+        return
       }
+
+      agentsWithMediatorSetupInProgress.delete(agent)
+      agent.config.logger.info('Mediator is set up')
+      await runOnMediatorReady(agent, onMediatorReady)
     }, delayMs)
 
   scheduleAttempt(MEDIATOR_SETUP_RETRY_MIN_DELAY_MS)

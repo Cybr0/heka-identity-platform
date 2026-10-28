@@ -68,6 +68,12 @@ The wallet is configured via environment variables loaded by [`react-native-conf
 The mediator connection does not block wallet initialization: if the mediator is not reachable (e.g. the device is offline), the wallet starts normally and keeps retrying the mediator setup in background.
 Until the mediator is set up, inbound DIDComm messages are not received.
 
+If the mediator is not reachable on the first launch, the wallet's public DID is created without mediator routing, and DIDComm messages sent to that DID are not received.
+Connections the wallet starts itself (by scanning an invitation) and OpenID4VC flows are not affected.
+
+With `ENABLE_PUBLIC_INVITATION`, the public invitation is created only after the mediator is set up (on startup or later, when the background setup succeeds), and it always uses mediator routing.
+If `MEDIATOR_URL` is not set, the public invitation is not created.
+
 ### Hedera
 
 | Variable              | Default                   | Description                                                                        |
