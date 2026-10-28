@@ -35,6 +35,10 @@ $RNFirebaseAsStaticFramework = (linkage == 'static')
 STATIC_LIBRARY_PODS = %w[anoncreds indy-vdr react-native-user-identity react-native-orientation-locker].freeze
 
 pre_install do |installer|
+  # A renamed or removed pod would silently fall back to a framework and break the build again
+  unknown_pods = STATIC_LIBRARY_PODS - installer.pod_targets.map(&:name)
+  raise Pod::Informative, "STATIC_LIBRARY_PODS lists unknown pods: #{unknown_pods.join(', ')}" unless unknown_pods.empty?
+
   installer.pod_targets.each do |pod|
     next unless STATIC_LIBRARY_PODS.include?(pod.name)
 
