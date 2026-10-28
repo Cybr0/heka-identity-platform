@@ -69,7 +69,7 @@ The mediator setup does not fail wallet initialization. While the mediator is no
 If the mediator is not reachable (e.g. the device is offline), the wallet starts right away and keeps retrying the mediator setup in background.
 Until the mediator is set up, inbound DIDComm messages are not received.
 
-Connections created before the mediator is set up (e.g. by scanning an invitation while offline) have no mediator routing, and they don't receive inbound DIDComm messages even after the mediator is connected.
+Connections created before the mediator is set up (e.g. while the mediator is unavailable and the wallet is still retrying) have no mediator routing, and they don't receive inbound DIDComm messages even after the mediator is connected.
 To fix it, create the connection again (scan the invitation again) once the mediator is set up.
 
 If the mediator is not reachable on the first launch, the wallet's public DID is created without mediator routing, and DIDComm messages sent to that DID are not received.
