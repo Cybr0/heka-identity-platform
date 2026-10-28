@@ -150,6 +150,51 @@ describe('Agent utils', () => {
       const [invitationConfig] = mockAgent.didcomm.oob.createInvitation.mock.calls[0]
       expect(invitationConfig.invitationDid).toBeUndefined()
     })
+
+    it('shares one invitation creation between concurrent calls for the same agent', async () => {
+      const { mockAgent, agent, invitationRecord } = createMockAgent()
+      await AsyncStorage.setItem(PUBLIC_DID_KEY, publicDid)
+      let resolveInvitation: (record: typeof invitationRecord) => void = () => undefined
+      mockAgent.didcomm.oob.createInvitation.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveInvitation = resolve
+        })
+      )
+
+      const firstCall = createPublicInvitationWhenMediatorReady(agent, label)
+      const secondCall = createPublicInvitationWhenMediatorReady(agent, label)
+
+      // Let the first call reach 'createInvitation' while the second one is still pending
+      for (let i = 0; i < 50 && mockAgent.didcomm.oob.createInvitation.mock.calls.length === 0; i++) {
+        await new Promise((resolve) => setImmediate(resolve))
+      }
+      expect(mockAgent.didcomm.oob.createInvitation).toHaveBeenCalledTimes(1)
+      resolveInvitation(invitationRecord)
+
+      const [firstUrl, secondUrl] = await Promise.all([firstCall, secondCall])
+
+      expect(firstUrl).toBe('didcomm://invite?oob=new')
+      expect(secondUrl).toBe(firstUrl)
+      expect(mockAgent.didcomm.oob.createInvitation).toHaveBeenCalledTimes(1)
+      expect(mockAgent.dids.getCreatedDids).toHaveBeenCalledTimes(1)
+      expect(await AsyncStorage.getItem(PUBLIC_INVITATION_ID_KEY)).toBe('new-invitation-id')
+    })
+
+    it('retries the creation on the next call after a failed one', async () => {
+      const { mockAgent, agent } = createMockAgent()
+      await AsyncStorage.setItem(PUBLIC_DID_KEY, publicDid)
+      const error = new Error('Invitation creation failed')
+      mockAgent.didcomm.oob.createInvitation.mockRejectedValueOnce(error)
+
+      await expect(createPublicInvitationWhenMediatorReady(agent, label)).rejects.toBe(error)
+      expect(await AsyncStorage.getItem(PUBLIC_INVITATION_ID_KEY)).toBeNull()
+
+      const invitationUrl = await createPublicInvitationWhenMediatorReady(agent, label)
+
+      expect(invitationUrl).toBe('didcomm://invite?oob=new')
+      expect(mockAgent.didcomm.oob.createInvitation).toHaveBeenCalledTimes(2)
+      expect(await AsyncStorage.getItem(PUBLIC_INVITATION_ID_KEY)).toBe('new-invitation-id')
+    })
   })
 
   describe('trySetupMediator', () => {

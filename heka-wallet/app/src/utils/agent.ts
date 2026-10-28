@@ -65,6 +65,7 @@ const MEDIATOR_SETUP_RETRY_MAX_DELAY_MS = 5 * 60 * 1000
 
 const agentsWithMediatorSetupInProgress = new WeakSet<Agent>()
 const mediatorSetupAttemptsInProgress = new WeakMap<Agent, Promise<void>>()
+const publicInvitationCreationsInProgress = new WeakMap<Agent, Promise<string>>()
 
 export const TRUSTED_X509_CERTIFICATES = [
   'MIIBwDCCAWWgAwIBAgIUSMdjaVc1KHI+3o6qJXhSC4sJh+cwCgYIKoZIzj0EAwIwNTEXMBUGA1UEAwwObURMIElzc3VlciBEZXYxDTALBgNVBAoMBEhla2ExCzAJBgNVBAYTAlVTMB4XDTI2MDMyNzIxNDA1NloXDTM2MDMyNDIxNDA1NlowNTEXMBUGA1UEAwwObURMIElzc3VlciBEZXYxDTALBgNVBAoMBEhla2ExCzAJBgNVBAYTAlVTMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1nIrm3O9VX8MdPrKWMhqqV0QMS4UtxKj6uUc8IdGE2fSsWyi7XQN3HoE1Ln9TDtOIHvSyW8Eyr98MlWGBBF/vqNTMFEwHQYDVR0OBBYEFNfkrHxd2nwtni96XrrYhaMgUFImMB8GA1UdIwQYMBaAFNfkrHxd2nwtni96XrrYhaMgUFImMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhAP0V5EW7j6Pb+lJktzdWrtEqhI3mYs9Fd+qh0p2kNXJPAiEAqK+q7Wk+t5e2yzvO3b6t3P5nIEnoQt3cvDsaUZY1dT0=',
@@ -244,6 +245,7 @@ async function isDidRoutedThroughMediator(agent: Agent, did: string): Promise<bo
  * Creates the multi-use public invitation, or returns the existing one.
  * Call it only once the default mediator is set up (see 'createPublicInvitationWhenMediatorReady'),
  * otherwise the invitation cannot receive DIDComm messages.
+ * Concurrent calls are not deduplicated here, use 'createPublicInvitationWhenMediatorReady' for that.
  *
  * If the public DID is routed through a mediator, it is used as the invitation DID.
  * Otherwise (the DID was created while the mediator was not reachable), the invitation uses inline services
@@ -289,8 +291,22 @@ export async function createPublicInvitationOrGetExisting(
  * Creates the public invitation (or returns the existing one) for the wallet's public DID.
  * Meant to be passed as the 'onMediatorReady' callback of 'trySetupMediator', so the invitation is created only
  * once the default mediator is set up, during agent startup or later by the background mediator setup.
+ *
+ * Concurrent calls for the same agent share a single creation, so they don't create duplicate public DIDs or invitations
+ * (e.g. the callback of a background mediator setup still pending from before an agent restart and the restart's own one).
  */
-export async function createPublicInvitationWhenMediatorReady(agent: Agent, label: string): Promise<string> {
+export function createPublicInvitationWhenMediatorReady(agent: Agent, label: string): Promise<string> {
+  const creationInProgress = publicInvitationCreationsInProgress.get(agent)
+  if (creationInProgress) return creationInProgress
+
+  const creation = createPublicDidAndInvitationOrGetExisting(agent, label).finally(() =>
+    publicInvitationCreationsInProgress.delete(agent)
+  )
+  publicInvitationCreationsInProgress.set(agent, creation)
+  return creation
+}
+
+async function createPublicDidAndInvitationOrGetExisting(agent: Agent, label: string): Promise<string> {
   const publicDid = await createPublicDidOrGetExisting(agent)
   return createPublicInvitationOrGetExisting(agent, publicDid, label)
 }
