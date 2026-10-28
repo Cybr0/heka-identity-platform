@@ -13,7 +13,7 @@ export type ShouldSend = () => boolean
 
 /**
  * Push notifications work only when the build has a Firebase config (`android/app/google-services.json`,
- * `ios/HekaWallet/GoogleService-Info.plist`); both are optional. iOS is configured but has not been built yet.
+ * `ios/HekaWallet/GoogleService-Info.plist`); both are optional.
  */
 export function isPushNotificationsSupported(): boolean {
   return (Platform.OS === 'android' || Platform.OS === 'ios') && getApps().length > 0

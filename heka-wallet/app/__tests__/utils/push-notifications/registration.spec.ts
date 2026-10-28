@@ -160,12 +160,26 @@ describe('push notifications registration', () => {
 
   it('on iOS registers with APNs even when RNFB reports the device as already registered', async () => {
     Platform.OS = 'ios'
-    mockFunction(isDeviceRegisteredForRemoteMessages).mockReturnValue(true)
+    mockFunction(isDeviceRegisteredForRemoteMessages).mockReturnValueOnce(true)
     const { hekaAgent } = createAgent()
 
     await expect(registerDeviceToken(hekaAgent)).resolves.toBe(true)
 
     expect(registerDeviceForRemoteMessages).toHaveBeenCalled()
+  })
+
+  it('on iOS logs and sends nothing when APNs registration fails', async () => {
+    Platform.OS = 'ios'
+    mockFunction(registerDeviceForRemoteMessages).mockRejectedValueOnce(
+      new Error('registerDeviceForRemoteMessages requested but system did not respond')
+    )
+    const { agent, hekaAgent } = createAgent()
+
+    await expect(registerDeviceToken(hekaAgent)).resolves.toBe(false)
+
+    expect(getToken).not.toHaveBeenCalled()
+    expect(agent.modules.pushNotificationsFcm.setDeviceInfo).not.toHaveBeenCalled()
+    expect(agent.config.logger.error).toHaveBeenCalled()
   })
 
   it('on Android does not register with APNs', async () => {
