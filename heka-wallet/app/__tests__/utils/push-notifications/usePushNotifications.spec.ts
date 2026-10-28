@@ -159,6 +159,55 @@ describe('usePushNotifications', () => {
     expect(lastShouldSend(mockFunction(unregisterDeviceToken))()).toBe(true)
   })
 
+  it('turns push off only after a register already on its way to the mediator has finished', async () => {
+    let registered = false
+    let finishRegister = (): void => undefined
+    givenWallet()
+    mockFunction(registerDeviceToken).mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishRegister = () => {
+            registered = true
+            resolve(true)
+          }
+        })
+    )
+    const { rerender } = renderHook(() => usePushNotifications())
+    await waitFor(() => expect(registerDeviceToken).toHaveBeenCalledTimes(1))
+
+    givenWallet({ usePushNotifications: false })
+    mockFunction(isDeviceTokenRegistered).mockImplementation(async () => registered)
+    rerender({})
+    await act(async () => undefined)
+    expect(isDeviceTokenRegistered).not.toHaveBeenCalled()
+
+    await act(async () => finishRegister())
+
+    await waitFor(() => expect(unregisterDeviceToken).toHaveBeenCalledTimes(1))
+  })
+
+  it('turns push back on only after a pending unregister has finished', async () => {
+    let finishUnregister = (): void => undefined
+    givenWallet({ usePushNotifications: false, registered: true })
+    mockFunction(unregisterDeviceToken).mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishUnregister = () => resolve(true)
+        })
+    )
+    const { rerender } = renderHook(() => usePushNotifications())
+    await waitFor(() => expect(unregisterDeviceToken).toHaveBeenCalledTimes(1))
+
+    givenWallet()
+    rerender({})
+    await act(async () => undefined)
+    expect(registerDeviceToken).not.toHaveBeenCalled()
+
+    await act(async () => finishUnregister())
+
+    await waitFor(() => expect(registerDeviceToken).toHaveBeenCalledTimes(1))
+  })
+
   it.each([
     ['the wallet is locked', { didAuthenticate: false }],
     ['the agent is not initialized', { isInitialized: false }],
