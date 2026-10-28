@@ -1,5 +1,9 @@
 import { getApps } from '@react-native-firebase/app'
-import { getToken, registerDeviceForRemoteMessages } from '@react-native-firebase/messaging'
+import {
+  getToken,
+  isDeviceRegisteredForRemoteMessages,
+  registerDeviceForRemoteMessages,
+} from '@react-native-firebase/messaging'
 import { Platform } from 'react-native'
 
 import { mockFunction } from '../../../../jest-helpers/helpers'
@@ -152,6 +156,16 @@ describe('push notifications registration', () => {
       connectionId: MEDIATOR_CONNECTION_ID,
       deviceInfo: { deviceToken: FCM_TOKEN, devicePlatform: 'ios' },
     })
+  })
+
+  it('on iOS registers with APNs even when RNFB reports the device as already registered', async () => {
+    Platform.OS = 'ios'
+    mockFunction(isDeviceRegisteredForRemoteMessages).mockReturnValue(true)
+    const { hekaAgent } = createAgent()
+
+    await expect(registerDeviceToken(hekaAgent)).resolves.toBe(true)
+
+    expect(registerDeviceForRemoteMessages).toHaveBeenCalled()
   })
 
   it('on Android does not register with APNs', async () => {
