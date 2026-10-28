@@ -23,6 +23,15 @@ This setup runs a single mediator instance with Postgres used for agent storage 
 
    `AGENT_ENDPOINTS` must be reachable **from the mobile device** (see [Reaching the mediator from a device](#reaching-the-mediator-from-a-device)).
 
+   > **Warning.** The default `ASKAR_STORE_KEY` and `POSTGRES_PASSWORD` (`mediator`) are public and meant for local development only.
+   > Before exposing the mediator through a tunnel or a public domain, replace both with random values, for example:
+   >
+   > ```bash
+   > openssl rand -base64 32
+   > ```
+   >
+   > Set them before the first start: changing `ASKAR_STORE_KEY` later requires removing the Postgres volume (see the note under [Configuration](#configuration)).
+
 2. Start the mediator:
 
    ```bash
@@ -51,9 +60,9 @@ This setup runs a single mediator instance with Postgres used for agent storage 
 | `AGENT_NAME`         | `Heka DIDComm Mediator`                   | Mediator label shown in the invitation.                                                                     |
 | `LOG_LEVEL`          | `info`                                    | One of `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `off`.                                           |
 | `ASKAR_STORE_ID`     | `mediator`                                | Askar store ID (also used as the Postgres database name).                                                   |
-| `ASKAR_STORE_KEY`    | `mediator`                                | Askar store key. **Replace for non-trivial use.**                                                           |
+| `ASKAR_STORE_KEY`    | `mediator`                                | Askar store key. Local development only: **replace with a random value** before exposing the mediator.      |
 | `POSTGRES_USER`      | `mediator`                                | Postgres user.                                                                                              |
-| `POSTGRES_PASSWORD`  | `mediator`                                | Postgres password. **Replace for non-trivial use.**                                                         |
+| `POSTGRES_PASSWORD`  | `mediator`                                | Postgres password. Local development only: **replace with a random value** before exposing the mediator.    |
 | `MEDIATOR_IMAGE_TAG` | `375518d`                                 | Mediator image tag. Upstream publishes commit-based tags only (`375518d` = `v0.0.2-alpha-20251223125919`). |
 
 > **Note.** Changing `ASKAR_STORE_ID` or removing the Postgres volume creates a new mediator identity and invitation.
