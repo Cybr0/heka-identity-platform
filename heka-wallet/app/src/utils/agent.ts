@@ -415,7 +415,9 @@ async function connectToMediator(agent: Agent, mediatorInvitationUrl: string): P
 
   const outOfBandInvitation = await agent.didcomm.oob.parseInvitation(mediatorInvitationUrl)
 
-  // Clean up leftovers of previous unsuccessful attempt, if any
+  // Clean up leftovers of previous unsuccessful attempt, if any.
+  // The mediation record of a failed attempt is left on purpose: it is bound to the deleted connection,
+  // never becomes the default mediator and does not affect the setup.
   const existingOutOfBandRecord = await agent.didcomm.oob.findByReceivedInvitationId(outOfBandInvitation.id)
   if (existingOutOfBandRecord) {
     const existingConnectionRecords = await agent.didcomm.connections.findAllByOutOfBandId(existingOutOfBandRecord.id)
