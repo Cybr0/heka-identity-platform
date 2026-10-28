@@ -457,6 +457,23 @@ describe('Agent utils', () => {
       expect(mediationRecipient.setDefaultMediator).not.toHaveBeenCalled()
     })
 
+    it('clears the lookup deadline when the mediator invitation lookup fails right away', async () => {
+      jest.useFakeTimers()
+      const { mockAgent, agent } = createMockAgent({ defaultMediator: null })
+      const { oob } = mockAgent.didcomm
+      oob.parseInvitation.mockRejectedValueOnce(new Error('InvitationUrl is invalid'))
+
+      await expect(trySetupMediator(agent, mediatorInvitationUrl)).resolves.toBeUndefined()
+
+      expect(mockAgent.config.logger.warn).toHaveBeenCalledTimes(1)
+      expect(mockAgent.config.logger.warn).toHaveBeenCalledWith('Failed to set up mediator, will retry in background', {
+        error: new Error('InvitationUrl is invalid'),
+      })
+      expect(oob.receiveInvitation).not.toHaveBeenCalled()
+      // Only the background retry is pending, the 15 s lookup deadline is cleared
+      expect(jest.getTimerCount()).toBe(1)
+    })
+
     it('shares one mediator connection attempt between concurrent setups for the same agent', async () => {
       const { mockAgent, agent } = createMockAgent({ defaultMediator: null })
       const { mediationRecipient, oob, connections } = mockAgent.didcomm
