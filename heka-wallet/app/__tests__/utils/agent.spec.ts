@@ -381,6 +381,94 @@ describe('Agent utils', () => {
       expect(onMediatorReady).toHaveBeenCalledTimes(1)
     })
 
+    it('shares one mediator connection attempt between concurrent setups for the same agent', async () => {
+      const { mockAgent, agent } = createMockAgent({ defaultMediator: null })
+      const { mediationRecipient, oob, connections } = mockAgent.didcomm
+      let resolveConnection: (record: typeof connectedMediatorConnectionRecord) => void = () => undefined
+      connections.returnWhenIsConnected.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveConnection = resolve
+        })
+      )
+      const firstCallback = jest.fn()
+      const secondCallback = jest.fn()
+
+      const firstCall = trySetupMediator(agent, mediatorInvitationUrl, firstCallback)
+      const secondCall = trySetupMediator(agent, mediatorInvitationUrl, secondCallback)
+
+      // Let the first setup reach 'returnWhenIsConnected' while the second one is still pending
+      for (let i = 0; i < 50 && connections.returnWhenIsConnected.mock.calls.length === 0; i++) {
+        await new Promise((resolve) => setImmediate(resolve))
+      }
+      expect(connections.returnWhenIsConnected).toHaveBeenCalledTimes(1)
+      resolveConnection(connectedMediatorConnectionRecord)
+
+      await Promise.all([firstCall, secondCall])
+
+      expect(mediationRecipient.findDefaultMediator).toHaveBeenCalledTimes(1)
+      expect(oob.parseInvitation).toHaveBeenCalledTimes(1)
+      expect(oob.receiveInvitation).toHaveBeenCalledTimes(1)
+      expect(mediationRecipient.requestAndAwaitGrant).toHaveBeenCalledTimes(1)
+      expect(mediationRecipient.setDefaultMediator).toHaveBeenCalledTimes(1)
+      expect(mediationRecipient.initiateMessagePickup).toHaveBeenCalledTimes(1)
+      // Each caller still gets its callback once the shared attempt succeeds
+      expect(firstCallback).toHaveBeenCalledTimes(1)
+      expect(secondCallback).toHaveBeenCalledTimes(1)
+    })
+
+    it('runs a single background setup when it is requested again while already running', async () => {
+      jest.useFakeTimers()
+      const { mockAgent, agent } = createMockAgent()
+      const { findDefaultMediator } = mockAgent.didcomm.mediationRecipient
+      const firstCallback = jest.fn()
+      const secondCallback = jest.fn()
+      // Both immediate attempts and the first background attempt fail
+      findDefaultMediator
+        .mockRejectedValueOnce(new Error('Mediator is not reachable'))
+        .mockRejectedValueOnce(new Error('Mediator is not reachable'))
+        .mockRejectedValueOnce(new Error('Mediator is not reachable'))
+
+      await trySetupMediator(agent, mediatorInvitationUrl, firstCallback)
+      await trySetupMediator(agent, mediatorInvitationUrl, secondCallback)
+      expect(findDefaultMediator).toHaveBeenCalledTimes(2)
+      expect(jest.getTimerCount()).toBe(1)
+
+      // One background attempt per backoff step, not one per 'trySetupMediator' call
+      await jest.advanceTimersByTimeAsync(5000)
+      expect(findDefaultMediator).toHaveBeenCalledTimes(3)
+
+      // Second background attempt (after the doubled delay) succeeds
+      await jest.advanceTimersByTimeAsync(10000)
+      expect(findDefaultMediator).toHaveBeenCalledTimes(4)
+
+      // The second call did not register its callback, as the background setup was already running
+      expect(firstCallback).toHaveBeenCalledTimes(1)
+      expect(secondCallback).not.toHaveBeenCalled()
+
+      await jest.advanceTimersByTimeAsync(10 * 60 * 1000)
+      expect(findDefaultMediator).toHaveBeenCalledTimes(4)
+    })
+
+    it('stops the background setup once the agent is shut down', async () => {
+      jest.useFakeTimers()
+      const { mockAgent, agent } = createMockAgent({ defaultMediator: null })
+      const { mediationRecipient, oob } = mockAgent.didcomm
+      const onMediatorReady = jest.fn()
+      oob.parseInvitation.mockRejectedValue(new Error('Mediator is not reachable'))
+
+      await trySetupMediator(agent, mediatorInvitationUrl, onMediatorReady)
+      expect(mediationRecipient.findDefaultMediator).toHaveBeenCalledTimes(1)
+      expect(oob.parseInvitation).toHaveBeenCalledTimes(1)
+
+      mockAgent.isInitialized = false
+      await jest.advanceTimersByTimeAsync(60 * 60 * 1000)
+
+      expect(mediationRecipient.findDefaultMediator).toHaveBeenCalledTimes(1)
+      expect(oob.parseInvitation).toHaveBeenCalledTimes(1)
+      expect(onMediatorReady).not.toHaveBeenCalled()
+      expect(jest.getTimerCount()).toBe(0)
+    })
+
     it('logs a mediator ready callback failure without throwing', async () => {
       const { mockAgent, agent } = createMockAgent()
       const error = new Error('Invitation creation failed')
