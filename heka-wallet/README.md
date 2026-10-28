@@ -65,11 +65,15 @@ The wallet is configured via environment variables loaded by [`react-native-conf
 |----------------|-------------|-----------|--------------------------------------------------------------------------------------------------------------------------------------------------|
 | `MEDIATOR_URL` | Recommended | _(unset)_ | DIDComm mediator invitation URL. Required for inbound DIDComm. See [DIDComm Mediator](../mediator/README.md) for how to run one and get the URL. |
 
-The mediator connection does not block wallet initialization: if the mediator is not reachable (e.g. the device is offline), the wallet starts normally and keeps retrying the mediator setup in background.
+The mediator setup does not fail wallet initialization. While the mediator is not set up yet, the wallet waits on startup for one setup attempt: up to ~20 s if the mediator is reachable but slow to respond.
+If the mediator is not reachable (e.g. the device is offline), the wallet starts right away and keeps retrying the mediator setup in background.
 Until the mediator is set up, inbound DIDComm messages are not received.
 
+Connections created before the mediator is set up (e.g. by scanning an invitation while offline) have no mediator routing, and they don't receive inbound DIDComm messages even after the mediator is connected.
+To fix it, create the connection again (scan the invitation again) once the mediator is set up.
+
 If the mediator is not reachable on the first launch, the wallet's public DID is created without mediator routing, and DIDComm messages sent to that DID are not received.
-Connections the wallet starts itself (by scanning an invitation) and OpenID4VC flows are not affected.
+OpenID4VC flows are not affected.
 
 With `ENABLE_PUBLIC_INVITATION`, the public invitation is created only after the mediator is set up (on startup or later, when the background setup succeeds), and it always uses mediator routing.
 If `MEDIATOR_URL` is not set, the public invitation is not created.
