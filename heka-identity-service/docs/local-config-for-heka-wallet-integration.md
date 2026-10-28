@@ -88,6 +88,9 @@ http {
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "Upgrade";
             proxy_set_header Host $host;
+            # nginx closes idle proxied connections after 60s by default,
+            # while the wallet keeps the message pickup WebSocket open
+            proxy_read_timeout 3600s;
         }
     }
 
