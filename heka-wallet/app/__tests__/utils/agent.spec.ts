@@ -41,7 +41,18 @@ const unroutedDidDocument = {
   didCommServices: [{ type: 'did-communication', routingKeys: [] }],
 }
 
-function createMockAgent() {
+const mediatorOutOfBandInvitation = { id: 'mediator-invitation-id' }
+const mediatorRouting = { endpoints: ['didcomm:transport/queue'], recipientKey: 'mock-recipient-key', routingKeys: [] }
+const mediatorConnectionRecord = { id: 'mediator-connection-id', state: 'request-sent' }
+const connectedMediatorConnectionRecord = { id: 'mediator-connection-id', state: 'completed' }
+const mediationRecord = { id: 'mediation-record-id' }
+
+interface MockAgentOptions {
+  // Default mediator found on startup, null means the mediator has to be connected first
+  defaultMediator?: { id: string } | null
+}
+
+function createMockAgent({ defaultMediator = { id: 'mediation-record-id' } }: MockAgentOptions = {}) {
   const invitationRecord = {
     id: 'new-invitation-id',
     outOfBandInvitation: { toUrl: jest.fn(() => 'didcomm://invite?oob=new') },
@@ -58,12 +69,25 @@ function createMockAgent() {
     },
     didcomm: {
       mediationRecipient: {
-        // Default mediator already exists, so the mediator setup succeeds without connecting
-        findDefaultMediator: jest.fn().mockResolvedValue({ id: 'mediation-record-id' }),
+        // By default a default mediator already exists, so the mediator setup succeeds without connecting
+        findDefaultMediator: jest.fn().mockResolvedValue(defaultMediator),
+        getRouting: jest.fn().mockResolvedValue(mediatorRouting),
+        requestAndAwaitGrant: jest.fn().mockResolvedValue(mediationRecord),
+        setDefaultMediator: jest.fn().mockResolvedValue(undefined),
+        initiateMessagePickup: jest.fn().mockResolvedValue(undefined),
       },
       oob: {
         createInvitation: jest.fn().mockResolvedValue(invitationRecord),
         findById: jest.fn(),
+        parseInvitation: jest.fn().mockResolvedValue(mediatorOutOfBandInvitation),
+        findByReceivedInvitationId: jest.fn().mockResolvedValue(null),
+        receiveInvitation: jest.fn().mockResolvedValue({ connectionRecord: mediatorConnectionRecord }),
+        deleteById: jest.fn().mockResolvedValue(undefined),
+      },
+      connections: {
+        returnWhenIsConnected: jest.fn().mockResolvedValue(connectedMediatorConnectionRecord),
+        findAllByOutOfBandId: jest.fn().mockResolvedValue([]),
+        deleteById: jest.fn().mockResolvedValue(undefined),
       },
     },
   }
@@ -208,6 +232,152 @@ describe('Agent utils', () => {
 
       await trySetupMediator(agent, mediatorInvitationUrl, onMediatorReady)
 
+      expect(onMediatorReady).toHaveBeenCalledTimes(1)
+    })
+
+    it('connects to the mediator and sets it as default when there is no default mediator', async () => {
+      const { mockAgent, agent } = createMockAgent({ defaultMediator: null })
+      const { mediationRecipient, oob, connections } = mockAgent.didcomm
+      const onMediatorReady = jest.fn()
+
+      await trySetupMediator(agent, mediatorInvitationUrl, onMediatorReady)
+
+      expect(oob.parseInvitation).toHaveBeenCalledWith(mediatorInvitationUrl)
+      expect(oob.findByReceivedInvitationId).toHaveBeenCalledWith(mediatorOutOfBandInvitation.id)
+      // Nothing to clean up from a previous attempt
+      expect(connections.deleteById).not.toHaveBeenCalled()
+      expect(oob.deleteById).not.toHaveBeenCalled()
+
+      // The current default mediator must not be used to connect to the mediator
+      expect(mediationRecipient.getRouting).toHaveBeenCalledWith({ useDefaultMediator: false })
+      expect(oob.receiveInvitation).toHaveBeenCalledTimes(1)
+      expect(oob.receiveInvitation).toHaveBeenCalledWith(mediatorOutOfBandInvitation, {
+        label: '',
+        alias: 'Mediator',
+        routing: mediatorRouting,
+      })
+      expect(connections.returnWhenIsConnected).toHaveBeenCalledWith(mediatorConnectionRecord.id, {
+        timeoutMs: expect.any(Number),
+      })
+
+      // Mediation is requested over the connected connection, not the one returned by 'receiveInvitation'
+      expect(mediationRecipient.requestAndAwaitGrant).toHaveBeenCalledWith(
+        connectedMediatorConnectionRecord,
+        expect.any(Number)
+      )
+      expect(mediationRecipient.setDefaultMediator).toHaveBeenCalledTimes(1)
+      expect(mediationRecipient.setDefaultMediator).toHaveBeenCalledWith(mediationRecord)
+      expect(mediationRecipient.initiateMessagePickup).toHaveBeenCalledTimes(1)
+      expect(mediationRecipient.initiateMessagePickup).toHaveBeenCalledWith(mediationRecord)
+
+      // The mediator is set as default before message pickup starts and before the callback runs
+      const setDefaultOrder = mediationRecipient.setDefaultMediator.mock.invocationCallOrder[0]
+      expect(setDefaultOrder).toBeLessThan(mediationRecipient.initiateMessagePickup.mock.invocationCallOrder[0])
+      expect(setDefaultOrder).toBeLessThan(onMediatorReady.mock.invocationCallOrder[0])
+
+      expect(onMediatorReady).toHaveBeenCalledTimes(1)
+      expect(mockAgent.config.logger.warn).not.toHaveBeenCalled()
+    })
+
+    it('does not connect to the mediator when the default mediator already exists', async () => {
+      const { mockAgent, agent } = createMockAgent()
+
+      await trySetupMediator(agent, mediatorInvitationUrl)
+
+      expect(mockAgent.didcomm.oob.parseInvitation).not.toHaveBeenCalled()
+      expect(mockAgent.didcomm.oob.receiveInvitation).not.toHaveBeenCalled()
+      expect(mockAgent.didcomm.mediationRecipient.requestAndAwaitGrant).not.toHaveBeenCalled()
+      expect(mockAgent.didcomm.mediationRecipient.setDefaultMediator).not.toHaveBeenCalled()
+      expect(mockAgent.didcomm.mediationRecipient.initiateMessagePickup).not.toHaveBeenCalled()
+    })
+
+    it('deletes the leftovers of a previous failed attempt before receiving the mediator invitation', async () => {
+      const { mockAgent, agent } = createMockAgent({ defaultMediator: null })
+      const { oob, connections } = mockAgent.didcomm
+      oob.findByReceivedInvitationId.mockResolvedValueOnce({ id: 'previous-oob-record-id' })
+      connections.findAllByOutOfBandId.mockResolvedValueOnce([
+        { id: 'previous-connection-id-1' },
+        { id: 'previous-connection-id-2' },
+      ])
+
+      await trySetupMediator(agent, mediatorInvitationUrl)
+
+      expect(oob.findByReceivedInvitationId).toHaveBeenCalledWith(mediatorOutOfBandInvitation.id)
+      expect(connections.findAllByOutOfBandId).toHaveBeenCalledWith('previous-oob-record-id')
+      expect(connections.deleteById).toHaveBeenCalledTimes(2)
+      expect(connections.deleteById).toHaveBeenNthCalledWith(1, 'previous-connection-id-1')
+      expect(connections.deleteById).toHaveBeenNthCalledWith(2, 'previous-connection-id-2')
+      expect(oob.deleteById).toHaveBeenCalledTimes(1)
+      expect(oob.deleteById).toHaveBeenCalledWith('previous-oob-record-id')
+
+      // Cleanup happens before the invitation is received again
+      const receiveOrder = oob.receiveInvitation.mock.invocationCallOrder[0]
+      expect(oob.deleteById.mock.invocationCallOrder[0]).toBeLessThan(receiveOrder)
+      for (const order of connections.deleteById.mock.invocationCallOrder) {
+        expect(order).toBeLessThan(receiveOrder)
+      }
+      expect(mockAgent.didcomm.mediationRecipient.setDefaultMediator).toHaveBeenCalledWith(mediationRecord)
+    })
+
+    it.each([
+      [
+        'the connection times out',
+        (mockAgent: ReturnType<typeof createMockAgent>['mockAgent']) =>
+          mockAgent.didcomm.connections.returnWhenIsConnected.mockRejectedValueOnce(
+            new Error('Timeout waiting for connection to be connected')
+          ),
+      ],
+      [
+        'the mediation grant fails',
+        (mockAgent: ReturnType<typeof createMockAgent>['mockAgent']) =>
+          mockAgent.didcomm.mediationRecipient.requestAndAwaitGrant.mockRejectedValueOnce(
+            new Error('Mediation grant timed out')
+          ),
+      ],
+    ])('retries the first-time mediator setup in background when %s', async (_, failFirstAttempt) => {
+      jest.useFakeTimers()
+      const { mockAgent, agent } = createMockAgent({ defaultMediator: null })
+      const { mediationRecipient, oob, connections } = mockAgent.didcomm
+      const onMediatorReady = jest.fn()
+      failFirstAttempt(mockAgent)
+      // The second attempt finds the out-of-band record left by the first one
+      oob.findByReceivedInvitationId
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'first-attempt-oob-record-id' })
+      connections.findAllByOutOfBandId.mockResolvedValueOnce([{ id: mediatorConnectionRecord.id }])
+
+      await expect(trySetupMediator(agent, mediatorInvitationUrl, onMediatorReady)).resolves.toBeUndefined()
+
+      expect(mockAgent.config.logger.warn).toHaveBeenCalledWith('Failed to set up mediator, will retry in background', {
+        error: expect.any(Error),
+      })
+      expect(oob.receiveInvitation).toHaveBeenCalledTimes(1)
+      expect(mediationRecipient.setDefaultMediator).not.toHaveBeenCalled()
+      expect(mediationRecipient.initiateMessagePickup).not.toHaveBeenCalled()
+      expect(onMediatorReady).not.toHaveBeenCalled()
+
+      await jest.advanceTimersByTimeAsync(5000)
+
+      // The background attempt cleans up the first attempt and connects again
+      expect(oob.parseInvitation).toHaveBeenCalledTimes(2)
+      expect(connections.deleteById).toHaveBeenCalledWith(mediatorConnectionRecord.id)
+      expect(oob.deleteById).toHaveBeenCalledWith('first-attempt-oob-record-id')
+      expect(oob.receiveInvitation).toHaveBeenCalledTimes(2)
+      expect(oob.receiveInvitation).toHaveBeenLastCalledWith(mediatorOutOfBandInvitation, {
+        label: '',
+        alias: 'Mediator',
+        routing: mediatorRouting,
+      })
+      expect(mediationRecipient.setDefaultMediator).toHaveBeenCalledTimes(1)
+      expect(mediationRecipient.setDefaultMediator).toHaveBeenCalledWith(mediationRecord)
+      expect(mediationRecipient.initiateMessagePickup).toHaveBeenCalledWith(mediationRecord)
+      expect(mockAgent.config.logger.info).toHaveBeenCalledWith('Mediator is set up')
+      expect(onMediatorReady).toHaveBeenCalledTimes(1)
+
+      // No further attempts or callback runs
+      await jest.advanceTimersByTimeAsync(10 * 60 * 1000)
+      expect(oob.receiveInvitation).toHaveBeenCalledTimes(2)
+      expect(mediationRecipient.setDefaultMediator).toHaveBeenCalledTimes(1)
       expect(onMediatorReady).toHaveBeenCalledTimes(1)
     })
 
