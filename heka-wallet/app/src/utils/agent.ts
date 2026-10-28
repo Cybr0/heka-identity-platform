@@ -31,6 +31,7 @@ import {
   DidCommDifPresentationExchangeProofFormatService,
   DidCommMediatorPickupStrategy,
   DidCommModule,
+  DidCommOutOfBandInvitation,
   DidCommOutOfBandRecord,
   DidCommProofV2Protocol,
 } from '@credo-ts/didcomm'
@@ -58,6 +59,9 @@ const PUBLIC_DID_KEY = 'PUBLIC_DID'
 
 const PUBLIC_INVITATION_ID_KEY = 'PUBLIC_INVITATION_ID'
 
+// Credo fetches a short invitation URL (without 'oob', 'c_i' or 'd_m') without a working timeout,
+// so a stalled request would block the mediator setup (and the first launch) until the OS gives up
+const MEDIATOR_INVITATION_RESOLUTION_TIMEOUT_MS = 15000
 const MEDIATOR_CONNECTION_TIMEOUT_MS = 10000
 const MEDIATION_GRANT_TIMEOUT_MS = 10000
 const MEDIATOR_SETUP_RETRY_MIN_DELAY_MS = 5000
@@ -413,7 +417,11 @@ async function connectToMediator(agent: Agent, mediatorInvitationUrl: string): P
   const existingMediationRecord = await agent.didcomm.mediationRecipient.findDefaultMediator()
   if (existingMediationRecord) return
 
-  const outOfBandInvitation = await agent.didcomm.oob.parseInvitation(mediatorInvitationUrl)
+  const outOfBandInvitation = await withTimeout<DidCommOutOfBandInvitation>(
+    agent.didcomm.oob.parseInvitation(mediatorInvitationUrl),
+    MEDIATOR_INVITATION_RESOLUTION_TIMEOUT_MS,
+    'Timed out resolving the mediator invitation URL'
+  )
 
   // Clean up leftovers of previous unsuccessful attempt, if any.
   // The mediation record of a failed attempt is left on purpose: it is bound to the deleted connection,
@@ -453,6 +461,20 @@ async function connectToMediator(agent: Agent, mediatorInvitationUrl: string): P
   // on the next agent initialization. With the 'PickUpV2' (polling) strategy this only reads local records and starts
   // an interval (pickup errors happen inside it), so it is not expected. Revisit if switching to 'PickUpV2LiveMode'.
   await agent.didcomm.mediationRecipient.initiateMessagePickup(mediationRecord)
+}
+
+/**
+ * Rejects with an error with the given message if the promise does not settle within 'timeoutMs'.
+ * The promise itself is not cancelled: its late result is ignored.
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
+  })
+  // A late rejection of the abandoned promise must not become an unhandled rejection
+  promise.catch(() => undefined)
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId))
 }
 
 /**

@@ -26,6 +26,9 @@ jest.mock('../../src/logger', () => ({ CredoLogger: jest.fn() }))
 jest.mock('../../src/utils/did', () => ({ getDidKeyVerificationMethodId: jest.fn() }))
 jest.mock('../../src/utils/revocation/TailsService', () => ({ TailsService: jest.fn() }))
 
+// Captured before any test fakes timers, to let Node report unhandled promise rejections
+const realSetImmediate = setImmediate
+
 const PUBLIC_DID_KEY = 'PUBLIC_DID'
 const PUBLIC_INVITATION_ID_KEY = 'PUBLIC_INVITATION_ID'
 
@@ -379,6 +382,79 @@ describe('Agent utils', () => {
       expect(oob.receiveInvitation).toHaveBeenCalledTimes(2)
       expect(mediationRecipient.setDefaultMediator).toHaveBeenCalledTimes(1)
       expect(onMediatorReady).toHaveBeenCalledTimes(1)
+    })
+
+    it('times out a stalled mediator invitation lookup and retries it in background', async () => {
+      jest.useFakeTimers()
+      const { mockAgent, agent } = createMockAgent({ defaultMediator: null })
+      const { mediationRecipient, oob } = mockAgent.didcomm
+      const onMediatorReady = jest.fn()
+      // The first lookup never settles, like a short invitation URL fetch that stalls
+      oob.parseInvitation.mockReturnValueOnce(new Promise(() => undefined))
+
+      let setupFinished = false
+      const setup = trySetupMediator(agent, mediatorInvitationUrl, onMediatorReady).then(() => {
+        setupFinished = true
+      })
+
+      await jest.advanceTimersByTimeAsync(15000 - 1)
+      expect(setupFinished).toBe(false)
+
+      await jest.advanceTimersByTimeAsync(1)
+      expect(setupFinished).toBe(true)
+      await setup
+
+      expect(mockAgent.config.logger.warn).toHaveBeenCalledTimes(1)
+      expect(mockAgent.config.logger.warn).toHaveBeenCalledWith('Failed to set up mediator, will retry in background', {
+        error: new Error('Timed out resolving the mediator invitation URL'),
+      })
+      expect(oob.receiveInvitation).not.toHaveBeenCalled()
+      expect(mediationRecipient.setDefaultMediator).not.toHaveBeenCalled()
+      expect(onMediatorReady).not.toHaveBeenCalled()
+      // Only the background retry is pending
+      expect(jest.getTimerCount()).toBe(1)
+
+      // The background retry starts a fresh attempt, and its lookup works
+      await jest.advanceTimersByTimeAsync(5000)
+
+      expect(oob.parseInvitation).toHaveBeenCalledTimes(2)
+      expect(oob.receiveInvitation).toHaveBeenCalledTimes(1)
+      expect(mediationRecipient.setDefaultMediator).toHaveBeenCalledTimes(1)
+      expect(mediationRecipient.setDefaultMediator).toHaveBeenCalledWith(mediationRecord)
+      expect(mockAgent.config.logger.info).toHaveBeenCalledWith('Mediator is set up')
+      expect(onMediatorReady).toHaveBeenCalledTimes(1)
+      // The deadline of the successful lookup is cleared
+      expect(jest.getTimerCount()).toBe(0)
+    })
+
+    it('ignores a late rejection of a timed out mediator invitation lookup', async () => {
+      jest.useFakeTimers()
+      const { mockAgent, agent } = createMockAgent({ defaultMediator: null })
+      const { mediationRecipient, oob } = mockAgent.didcomm
+      let rejectLookup: (error: Error) => void = () => undefined
+      oob.parseInvitation.mockReturnValueOnce(
+        new Promise((_, reject) => {
+          rejectLookup = reject
+        })
+      )
+
+      let setupFinished = false
+      const setup = trySetupMediator(agent, mediatorInvitationUrl).then(() => {
+        setupFinished = true
+      })
+      await jest.advanceTimersByTimeAsync(15000)
+      expect(setupFinished).toBe(true)
+      await setup
+
+      rejectLookup(new Error('Network request failed'))
+      // Give Node a chance to report an unhandled rejection: Jest fails the running test on one
+      await new Promise((resolve) => realSetImmediate(resolve))
+      await new Promise((resolve) => realSetImmediate(resolve))
+
+      // The late rejection is not reported as another failed attempt
+      expect(mockAgent.config.logger.warn).toHaveBeenCalledTimes(1)
+      expect(oob.receiveInvitation).not.toHaveBeenCalled()
+      expect(mediationRecipient.setDefaultMediator).not.toHaveBeenCalled()
     })
 
     it('shares one mediator connection attempt between concurrent setups for the same agent', async () => {
