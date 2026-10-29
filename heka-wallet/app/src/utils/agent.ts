@@ -33,6 +33,7 @@ import {
   DidCommModule,
   DidCommOutOfBandInvitation,
   DidCommOutOfBandRecord,
+  DidCommOutOfBandRole,
   DidCommProofV2Protocol,
 } from '@credo-ts/didcomm'
 import {
@@ -59,8 +60,8 @@ const PUBLIC_DID_KEY = 'PUBLIC_DID'
 
 const PUBLIC_INVITATION_ID_KEY = 'PUBLIC_INVITATION_ID'
 
-// Credo fetches a short invitation URL (without 'oob', 'c_i' or 'd_m') without a working timeout,
-// so a stalled request would block the mediator setup (and the first launch) until the OS gives up
+// Credo fetches a short invitation URL (without 'oob', 'c_i' or 'd_m') or resolves a mediator 'did:web' without a working
+// timeout, so a stalled request would block the mediator setup (and the first launch) until the OS gives up
 const MEDIATOR_INVITATION_RESOLUTION_TIMEOUT_MS = 15000
 const MEDIATOR_CONNECTION_TIMEOUT_MS = 10000
 const MEDIATION_GRANT_TIMEOUT_MS = 10000
@@ -394,7 +395,32 @@ export async function ensureExampleCredentialCreated(agent: Agent): Promise<void
 }
 
 /**
- * Connects to the mediator using provided invitation URL, requests mediation and starts message pickup.
+ * Where the wallet gets the mediator invitation from: an invitation URL, or a public DID of the mediator (implicit invitation).
+ */
+export type MediatorSource = { type: 'invitationUrl'; invitationUrl: string } | { type: 'publicDid'; publicDid: string }
+
+/**
+ * Returns the mediator source for the 'MEDIATOR_URL' and 'MEDIATOR_PUBLIC_DID' config values, or undefined if neither is set.
+ * If both are set, the invitation URL is used and a warning is logged.
+ */
+export function getMediatorSource(
+  { mediatorUrl, mediatorPublicDid }: { mediatorUrl?: string; mediatorPublicDid?: string },
+  logger: { warn: (message: string) => void }
+): MediatorSource | undefined {
+  if (mediatorUrl) {
+    if (mediatorPublicDid) {
+      logger.warn('Both MEDIATOR_URL and MEDIATOR_PUBLIC_DID are set, MEDIATOR_PUBLIC_DID is ignored')
+    }
+    return { type: 'invitationUrl', invitationUrl: mediatorUrl }
+  }
+
+  if (mediatorPublicDid) return { type: 'publicDid', publicDid: mediatorPublicDid }
+
+  return undefined
+}
+
+/**
+ * Connects to the mediator using provided invitation URL or public DID, requests mediation and starts message pickup.
  * Does nothing if the default mediator is already set up - in this case message pickup is started by Credo on agent initialization.
  *
  * Note: We intentionally don't use 'mediatorInvitationUrl' option of Credo mediation recipient module,
@@ -402,47 +428,23 @@ export async function ensureExampleCredentialCreated(agent: Agent): Promise<void
  *
  * Concurrent calls for the same agent share a single setup attempt, so they don't create duplicate mediator connections.
  */
-export function setupMediatorIfNeeded(agent: Agent, mediatorInvitationUrl: string): Promise<void> {
+export function setupMediatorIfNeeded(agent: Agent, mediatorSource: MediatorSource): Promise<void> {
   const attemptInProgress = mediatorSetupAttemptsInProgress.get(agent)
   if (attemptInProgress) return attemptInProgress
 
-  const attempt = connectToMediator(agent, mediatorInvitationUrl).finally(() =>
-    mediatorSetupAttemptsInProgress.delete(agent)
-  )
+  const attempt = connectToMediator(agent, mediatorSource).finally(() => mediatorSetupAttemptsInProgress.delete(agent))
   mediatorSetupAttemptsInProgress.set(agent, attempt)
   return attempt
 }
 
-async function connectToMediator(agent: Agent, mediatorInvitationUrl: string): Promise<void> {
+async function connectToMediator(agent: Agent, mediatorSource: MediatorSource): Promise<void> {
   const existingMediationRecord = await agent.didcomm.mediationRecipient.findDefaultMediator()
   if (existingMediationRecord) return
 
-  const outOfBandInvitation = await withTimeout<DidCommOutOfBandInvitation>(
-    agent.didcomm.oob.parseInvitation(mediatorInvitationUrl),
-    MEDIATOR_INVITATION_RESOLUTION_TIMEOUT_MS,
-    'Timed out resolving the mediator invitation URL'
-  )
-
-  // Clean up leftovers of previous unsuccessful attempt, if any.
-  // The mediation record of a failed attempt is left on purpose: it is bound to the deleted connection,
-  // never becomes the default mediator and does not affect the setup.
-  const existingOutOfBandRecord = await agent.didcomm.oob.findByReceivedInvitationId(outOfBandInvitation.id)
-  if (existingOutOfBandRecord) {
-    const existingConnectionRecords = await agent.didcomm.connections.findAllByOutOfBandId(existingOutOfBandRecord.id)
-    for (const connectionRecord of existingConnectionRecords) {
-      await agent.didcomm.connections.deleteById(connectionRecord.id)
-    }
-    await agent.didcomm.oob.deleteById(existingOutOfBandRecord.id)
-  }
-
-  // We don't want to use the current default mediator (if any) when connecting to the mediator
-  const routing = await agent.didcomm.mediationRecipient.getRouting({ useDefaultMediator: false })
-
-  let { connectionRecord: mediatorConnectionRecord } = await agent.didcomm.oob.receiveInvitation(outOfBandInvitation, {
-    label: '',
-    alias: 'Mediator',
-    routing,
-  })
+  let { connectionRecord: mediatorConnectionRecord } =
+    mediatorSource.type === 'publicDid'
+      ? await receiveMediatorImplicitInvitation(agent, mediatorSource.publicDid)
+      : await receiveMediatorInvitation(agent, mediatorSource.invitationUrl)
 
   if (!mediatorConnectionRecord) {
     throw new Error('Failed to create connection with mediator')
@@ -461,6 +463,72 @@ async function connectToMediator(agent: Agent, mediatorInvitationUrl: string): P
   // on the next agent initialization. With the 'PickUpV2' (polling) strategy this only reads local records and starts
   // an interval (pickup errors happen inside it), so it is not expected. Revisit if switching to 'PickUpV2LiveMode'.
   await agent.didcomm.mediationRecipient.initiateMessagePickup(mediationRecord)
+}
+
+async function receiveMediatorInvitation(agent: Agent, mediatorInvitationUrl: string) {
+  const outOfBandInvitation = await withTimeout<DidCommOutOfBandInvitation>(
+    agent.didcomm.oob.parseInvitation(mediatorInvitationUrl),
+    MEDIATOR_INVITATION_RESOLUTION_TIMEOUT_MS,
+    'Timed out resolving the mediator invitation URL'
+  )
+
+  const existingOutOfBandRecord = await agent.didcomm.oob.findByReceivedInvitationId(outOfBandInvitation.id)
+  await deleteMediatorConnectionLeftovers(agent, existingOutOfBandRecord ? [existingOutOfBandRecord] : [])
+
+  // We don't want to use the current default mediator (if any) when connecting to the mediator
+  const routing = await agent.didcomm.mediationRecipient.getRouting({ useDefaultMediator: false })
+
+  return agent.didcomm.oob.receiveInvitation(outOfBandInvitation, {
+    label: '',
+    alias: 'Mediator',
+    routing,
+  })
+}
+
+async function receiveMediatorImplicitInvitation(agent: Agent, mediatorDid: string) {
+  // Credo resolves the DID again when receiving the invitation, without a timeout.
+  // Resolution results (e.g. of 'did:web') are cached, so the DID resolved here is not fetched again.
+  await withTimeout(
+    agent.dids.resolveDidDocument(mediatorDid),
+    MEDIATOR_INVITATION_RESOLUTION_TIMEOUT_MS,
+    'Timed out resolving the mediator DID'
+  )
+
+  // The implicit invitation id is the DID itself. Credo does not reject a duplicate implicit invitation,
+  // so there may be more than one leftover out-of-band record.
+  const existingOutOfBandRecords = await agent.didcomm.oob.findAllByQuery({
+    invitationId: mediatorDid,
+    role: DidCommOutOfBandRole.Receiver,
+  })
+  await deleteMediatorConnectionLeftovers(agent, existingOutOfBandRecords)
+
+  // We don't want to use the current default mediator (if any) when connecting to the mediator
+  const routing = await agent.didcomm.mediationRecipient.getRouting({ useDefaultMediator: false })
+
+  return agent.didcomm.oob.receiveImplicitInvitation({
+    did: mediatorDid,
+    label: '',
+    alias: 'Mediator',
+    routing,
+  })
+}
+
+/**
+ * Deletes the out-of-band records and connections left by a previous unsuccessful mediator setup attempt.
+ * The mediation record of a failed attempt is left on purpose: it is bound to the deleted connection,
+ * never becomes the default mediator and does not affect the setup.
+ */
+async function deleteMediatorConnectionLeftovers(
+  agent: Agent,
+  outOfBandRecords: DidCommOutOfBandRecord[]
+): Promise<void> {
+  for (const outOfBandRecord of outOfBandRecords) {
+    const connectionRecords = await agent.didcomm.connections.findAllByOutOfBandId(outOfBandRecord.id)
+    for (const connectionRecord of connectionRecords) {
+      await agent.didcomm.connections.deleteById(connectionRecord.id)
+    }
+    await agent.didcomm.oob.deleteById(outOfBandRecord.id)
+  }
 }
 
 /**
@@ -502,14 +570,14 @@ async function runOnMediatorReady(agent: Agent, onMediatorReady?: OnMediatorRead
  */
 export async function trySetupMediator(
   agent: Agent,
-  mediatorInvitationUrl: string,
+  mediatorSource: MediatorSource,
   onMediatorReady?: OnMediatorReady
 ): Promise<void> {
   try {
-    await setupMediatorIfNeeded(agent, mediatorInvitationUrl)
+    await setupMediatorIfNeeded(agent, mediatorSource)
   } catch (error) {
     agent.config.logger.warn('Failed to set up mediator, will retry in background', { error })
-    setupMediatorInBackground(agent, mediatorInvitationUrl, onMediatorReady)
+    setupMediatorInBackground(agent, mediatorSource, onMediatorReady)
     return
   }
 
@@ -525,7 +593,7 @@ export async function trySetupMediator(
  */
 export function setupMediatorInBackground(
   agent: Agent,
-  mediatorInvitationUrl: string,
+  mediatorSource: MediatorSource,
   onMediatorReady?: OnMediatorReady
 ): void {
   if (agentsWithMediatorSetupInProgress.has(agent)) return
@@ -539,7 +607,7 @@ export function setupMediatorInBackground(
       }
 
       try {
-        await setupMediatorIfNeeded(agent, mediatorInvitationUrl)
+        await setupMediatorIfNeeded(agent, mediatorSource)
       } catch (error) {
         const nextDelayMs = Math.min(delayMs * 2, MEDIATOR_SETUP_RETRY_MAX_DELAY_MS)
         agent.config.logger.warn(`Failed to set up mediator, retrying in ${nextDelayMs / 1000}s`, { error })

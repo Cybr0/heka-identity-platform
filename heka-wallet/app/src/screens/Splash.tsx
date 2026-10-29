@@ -12,6 +12,7 @@ import {
   createPublicDidOrGetExisting,
   createPublicInvitationWhenMediatorReady,
   ensureExampleCredentialCreated,
+  getMediatorSource,
   HekaWalletAgent,
   OnMediatorReady,
   trySetupMediator,
@@ -84,6 +85,11 @@ export const Splash: React.FC = () => {
           return
         }
 
+        const mediatorSource = getMediatorSource(
+          { mediatorUrl: Config.MEDIATOR_URL, mediatorPublicDid: Config.MEDIATOR_PUBLIC_DID },
+          logger
+        )
+
         if (agent) {
           logger.info('Agent already initialized, restarting...')
 
@@ -92,8 +98,8 @@ export const Splash: React.FC = () => {
           if (isAgentRestarted) {
             // Public DID already exists here, so there is no need to wait for the mediator.
             // The public invitation, if it does not exist yet, is created once the mediator is set up.
-            if (Config.MEDIATOR_URL) {
-              void trySetupMediator(agent, Config.MEDIATOR_URL, getOnMediatorReady(agent))
+            if (mediatorSource) {
+              void trySetupMediator(agent, mediatorSource, getOnMediatorReady(agent))
             }
 
             // The onboarding workflow transitions to the main stack automatically once
@@ -130,12 +136,16 @@ export const Splash: React.FC = () => {
 
         // If the mediator is set up right away, the public invitation is created here, before the agent is set.
         // Otherwise it is created later, when the background mediator setup succeeds.
-        if (Config.MEDIATOR_URL) {
-          await trySetupMediator(newAgent, Config.MEDIATOR_URL, getOnMediatorReady(newAgent))
+        if (mediatorSource) {
+          await trySetupMediator(newAgent, mediatorSource, getOnMediatorReady(newAgent))
         } else {
-          logger.warn('MEDIATOR_URL is not set, inbound DIDComm messages will not be received')
+          logger.warn(
+            'Neither MEDIATOR_URL nor MEDIATOR_PUBLIC_DID is set, inbound DIDComm messages will not be received'
+          )
           if (isPublicInvitationEnabled) {
-            logger.warn('MEDIATOR_URL is not set, the public invitation is not created because it requires a mediator')
+            logger.warn(
+              'Neither MEDIATOR_URL nor MEDIATOR_PUBLIC_DID is set, the public invitation is not created because it requires a mediator'
+            )
           }
         }
 
