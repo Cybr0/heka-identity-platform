@@ -487,7 +487,8 @@ async function receiveMediatorInvitation(agent: Agent, mediatorInvitationUrl: st
 
 async function receiveMediatorImplicitInvitation(agent: Agent, mediatorDid: string) {
   // Credo resolves the DID again when receiving the invitation, without a timeout.
-  // Resolution results (e.g. of 'did:web') are cached, so the DID resolved here is not fetched again.
+  // Resolvers that allow caching (e.g. 'did:web', 'did:hedera') cache the result, so the DID resolved here is not fetched again.
+  // Non-caching resolvers (e.g. 'did:indybesu') fetch it again, and only this resolution is bounded.
   await withTimeout(
     agent.dids.resolveDidDocument(mediatorDid),
     MEDIATOR_INVITATION_RESOLUTION_TIMEOUT_MS,
