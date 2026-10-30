@@ -42,7 +42,7 @@ export class NotificationGateway implements OnGatewayConnection {
 
   @CreateRequestContext()
   public async handleConnection(socket: WebSocket, request: IncomingMessage): Promise<void> {
-    // The upgrade request carries the access token, so only its URL is logged, with OID4VCI secrets masked
+    // The upgrade request carries the access token, so only its URL is logged, with OID4VC session secrets masked
     const logger = this.logger.child('handleConnection', { url: maskSecretsInUrl(request.url) })
     logger.trace('>')
 

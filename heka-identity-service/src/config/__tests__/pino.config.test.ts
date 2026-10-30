@@ -151,6 +151,64 @@ describe('pino config', () => {
       expect(entry.req.headers.authorization).toBe('******')
     }
   })
+  it('masks OID4VP secrets in the logged URL and query without changing what the handler reads', async () => {
+    const stream = collectingStream()
+    const app = express()
+    app.use(pinoHttp(loggerOptions(), stream))
+
+    let handlerSaw: unknown
+    let completed!: Promise<void>
+    app.get('/openid4vc/verification-session', (req, res) => {
+      completed = new Promise((resolve) => res.once('finish', () => resolve()))
+      req.log.info('inside')
+      handlerSaw = req.query
+      res.end('ok')
+    })
+    const server = app.listen(0, '127.0.0.1')
+    await new Promise<void>((resolve) => server.once('listening', resolve))
+
+    try {
+      const { port } = server.address() as AddressInfo
+      const query =
+        'nonce=NONCE-SECRET&authorizationRequestUri=AUTH-REQUEST-URI-SECRET&payloadState=PAYLOAD-STATE-SECRET&publicVerifierId=v1&state=RequestCreated'
+      const response = await fetch(`http://127.0.0.1:${port}/openid4vc/verification-session?${query}`)
+      await response.text()
+      await completed
+    } finally {
+      await new Promise((resolve) => server.close(resolve))
+    }
+
+    expect(handlerSaw).toEqual({
+      nonce: 'NONCE-SECRET',
+      authorizationRequestUri: 'AUTH-REQUEST-URI-SECRET',
+      payloadState: 'PAYLOAD-STATE-SECRET',
+      publicVerifierId: 'v1',
+      state: 'RequestCreated',
+    })
+
+    const output = stream.lines.join('')
+    for (const secret of ['NONCE-SECRET', 'AUTH-REQUEST-URI-SECRET', 'PAYLOAD-STATE-SECRET']) {
+      expect(output).not.toContain(secret)
+    }
+
+    const entries = stream.lines.map((line) => JSON.parse(line) as LogEntry)
+    const inside = entries.find((entry) => entry.msg === 'inside')
+    const completedEntry = entries.find((entry) => entry.msg === 'request completed')
+    if (!inside || !completedEntry) throw new Error(`expected 'inside' and 'request completed' lines, got: ${output}`)
+
+    for (const entry of [inside, completedEntry]) {
+      expect(entry.req.url).toBe(
+        '/openid4vc/verification-session?nonce=******&authorizationRequestUri=******&payloadState=******&publicVerifierId=v1&state=RequestCreated',
+      )
+      expect(entry.req.query).toEqual({
+        nonce: '******',
+        authorizationRequestUri: '******',
+        payloadState: '******',
+        publicVerifierId: 'v1',
+        state: 'RequestCreated',
+      })
+    }
+  })
 })
 
 describe('maskSecretsInRequest', () => {
@@ -196,6 +254,18 @@ describe('maskSecretsInUrl', () => {
   it('masks the listed parameters and keeps the path and the other parameters', () => {
     expect(maskSecretsInUrl('/a/b?cNonce=N&x=1&credentialOfferUri=U')).toBe(
       '/a/b?cNonce=******&x=1&credentialOfferUri=******',
+    )
+  })
+
+  it('masks the OID4VP verification-session lookup parameters', () => {
+    expect(
+      maskSecretsInUrl('/openid4vc/verification-session?nonce=N&authorizationRequestUri=U&payloadState=S&state=done'),
+    ).toBe('/openid4vc/verification-session?nonce=******&authorizationRequestUri=******&payloadState=******&state=done')
+  })
+
+  it('keeps parameters whose names only contain a listed name', () => {
+    expect(maskSecretsInUrl('/x?nonceCount=1&state=done&publicVerifierId=v1')).toBe(
+      '/x?nonceCount=1&state=done&publicVerifierId=v1',
     )
   })
 

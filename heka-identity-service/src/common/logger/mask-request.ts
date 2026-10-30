@@ -1,9 +1,19 @@
 /**
- * Query parameters that carry OID4VCI secrets, masked in the logged request URL and query.
- * They come from `GET /openid4vc/issuance-session` (`GetIssuanceSessionByQueryDto`): the pre-authorized code redeems
- * the offer, the offer URI dereferences to it, and the c_nonce is session-binding material.
+ * Query parameters that carry OID4VC session secrets, masked in the logged request URL and query.
+ * - `GET /openid4vc/issuance-session` (`GetIssuanceSessionByQueryDto`): the pre-authorized code redeems the offer,
+ *   the offer URI dereferences to it, and the c_nonce is session-binding material.
+ * - `GET /openid4vc/verification-session` (`GetVerificationSessionByQueryDto`): the authorization request URI
+ *   dereferences to the live presentation request, and the nonce and payload state bind the session.
+ * No other endpoint of the service takes query parameters with these names.
  */
-export const SECRET_QUERY_PARAMS: readonly string[] = ['preAuthorizedCode', 'credentialOfferUri', 'cNonce']
+export const SECRET_QUERY_PARAMS: readonly string[] = [
+  'preAuthorizedCode',
+  'credentialOfferUri',
+  'cNonce',
+  'nonce',
+  'authorizationRequestUri',
+  'payloadState',
+]
 
 const CENSOR = '******'
 

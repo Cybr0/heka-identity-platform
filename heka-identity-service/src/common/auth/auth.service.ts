@@ -34,7 +34,7 @@ export class AuthService {
    * Throws `UnauthorizedException` when the token is missing, invalid, or does not meet the claim contract.
    */
   public async validateRequestToken(request: IncomingMessage): Promise<AuthInfo> {
-    // Bind only the method and the URL with OID4VCI secrets masked: the request carries the access token in its headers
+    // Bind only the method and the URL with OID4VC session secrets masked: the request carries the access token in its headers
     const logger = this.logger.child('validateRequestToken', {
       method: request.method,
       url: maskSecretsInUrl(request.url),
