@@ -20,9 +20,11 @@ const CENSOR = '******'
 /**
  * pino `req` serializer that masks {@link SECRET_QUERY_PARAMS} in `url` and `query`.
  *
- * pino applies it to every log object key named `req`, including body DTOs that controllers bind as `{ req }`,
- * so it accepts any value and never throws. It never mutates its input: `query` is the live `req.query`
- * that the controller reads.
+ * pino applies it to every log object key named `req`. Inside an HTTP request, pino-http runs it after the standard
+ * request serializer, so it receives the reduced request (`id`, `method`, `url`, `query`, `params`, `headers`, ...)
+ * built from whatever was logged under `req`. Outside a request, nestjs-pino logs through a plain `pino(config)`
+ * logger that passes it the logged value as is, e.g. a body DTO bound as `{ req }`, so it accepts any value and
+ * never throws. It never mutates its input: `query` is the live `req.query` that the controller reads.
  */
 export function maskSecretsInRequest<T>(req: T): T {
   if (typeof req !== 'object' || req === null) return req
