@@ -11,6 +11,7 @@ import { Logger } from 'common/logger'
 import { getDidControllerWalletId, getWalletId } from 'utils/auth'
 
 import { AuthService } from '../auth.service'
+import { TokenIntrospectionService } from '../token-introspection.service'
 import { TokenVerifier } from '../token-verifier.service'
 
 describe('getWalletId', () => {
@@ -77,6 +78,7 @@ describe('AuthService', () => {
   let service: AuthService
   let agent: Agent
   let tokenVerifier: TokenVerifier
+  let tokenIntrospection: TokenIntrospectionService
   let em: EntityManager
   let logger: Logger
 
@@ -130,9 +132,10 @@ describe('AuthService', () => {
       },
     })
     tokenVerifier = createMock<TokenVerifier>()
+    tokenIntrospection = createMock<TokenIntrospectionService>()
     em = createMock<EntityManager>()
     logger = createMock<Logger>()
-    service = new AuthService(agent, tokenVerifier, em, logger)
+    service = new AuthService(agent, tokenVerifier, tokenIntrospection, em, logger)
   })
 
   describe('validateRequestToken', () => {
@@ -156,6 +159,19 @@ describe('AuthService', () => {
       vi.mocked(tokenVerifier.verify).mockRejectedValue(new UnauthorizedException('Invalid token: ERR_JWT_EXPIRED'))
 
       await expect(service.validateRequestToken(request)).rejects.toThrow('Invalid token: ERR_JWT_EXPIRED')
+      expect(tokenIntrospection.assertTokenActive).not.toHaveBeenCalled()
+    })
+
+    test('rejects a revoked token before provisioning the user and wallet', async () => {
+      const request = { headers: { authorization: 'Bearer revoked-jwt' } } as IncomingMessage
+      vi.mocked(tokenVerifier.verify).mockResolvedValue({ sub: '11', org_id: '7', name: 'test', roles: [Role.Issuer] })
+      vi.mocked(tokenIntrospection.assertTokenActive).mockRejectedValue(
+        new UnauthorizedException('Token is not active'),
+      )
+
+      await expect(service.validateRequestToken(request)).rejects.toThrow('Token is not active')
+      expect(tokenIntrospection.assertTokenActive).toHaveBeenCalledWith('revoked-jwt')
+      expect(em.findOne).not.toHaveBeenCalled()
     })
 
     test('verifies token and returns AuthInfo', async () => {
@@ -171,6 +187,7 @@ describe('AuthService', () => {
       const result = await service.validateRequestToken(request)
 
       expect(tokenVerifier.verify).toHaveBeenCalledWith('my-jwt')
+      expect(tokenIntrospection.assertTokenActive).toHaveBeenCalledWith('my-jwt')
       expect(em.findOne).toHaveBeenNthCalledWith(1, User, { id: '11' })
       expect(em.findOne).toHaveBeenNthCalledWith(2, Wallet, { id: 'Issuer_11_in_Organization_7' })
       expect(result.userId).toBe('11')
@@ -200,7 +217,7 @@ describe('AuthService', () => {
       })
       childLogger.child = child
       const recordingLogger = { child } as unknown as Logger
-      service = new AuthService(agent, tokenVerifier, em, recordingLogger)
+      service = new AuthService(agent, tokenVerifier, tokenIntrospection, em, recordingLogger)
       calls.length = 0
 
       const request = {
@@ -216,6 +233,8 @@ describe('AuthService', () => {
 
       await service.validateRequestToken(request)
 
+      // The token reaches the introspection check but none of the AuthService log calls
+      expect(tokenIntrospection.assertTokenActive).toHaveBeenCalledWith('my-jwt')
       const logged = JSON.stringify(calls)
       expect(logged).not.toContain('my-jwt')
       expect(logged).not.toContain('authorization')
@@ -229,7 +248,7 @@ describe('AuthService', () => {
   describe('validateRequestToken URL logging', () => {
     test('masks OID4VCI secrets in the bound URL and keeps the path and other parameters', async () => {
       const recording = makeRecordingLogger()
-      service = new AuthService(agent, tokenVerifier, em, recording.logger)
+      service = new AuthService(agent, tokenVerifier, tokenIntrospection, em, recording.logger)
       recording.calls.length = 0
 
       const request = {
@@ -277,6 +296,18 @@ describe('AuthService', () => {
       expect(result.expiresAt).toBe(1_900_000_000)
     })
 
+    test('rejects a revoked token before provisioning the user and wallet', async () => {
+      const request = { headers: { 'sec-websocket-protocol': `heka.bearer, ${jwt}` } } as unknown as IncomingMessage
+      vi.mocked(em.findOne).mockReset()
+      vi.mocked(tokenIntrospection.assertTokenActive).mockRejectedValue(
+        new UnauthorizedException('Token is not active'),
+      )
+
+      await expect(service.validateWebSocketToken(request)).rejects.toThrow('Token is not active')
+      expect(tokenIntrospection.assertTokenActive).toHaveBeenCalledWith(jwt)
+      expect(em.findOne).not.toHaveBeenCalled()
+    })
+
     test('falls back to the Authorization header', async () => {
       const request = { headers: { authorization: `Bearer ${jwt}` } } as IncomingMessage
 
@@ -294,7 +325,7 @@ describe('AuthService', () => {
 
     test('masks OID4VCI secrets in the bound URL', async () => {
       const recording = makeRecordingLogger()
-      service = new AuthService(agent, tokenVerifier, em, recording.logger)
+      service = new AuthService(agent, tokenVerifier, tokenIntrospection, em, recording.logger)
       recording.calls.length = 0
       const request = {
         url: `/notifications?${SECRET_QUERY}`,
