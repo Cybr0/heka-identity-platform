@@ -198,7 +198,7 @@ describe('AuthService', () => {
       })
       childLogger.child = child
       const recordingLogger = { child } as unknown as Logger
-      service = new AuthService(agent, tokenVerifier, em, recordingLogger)
+      service = new AuthService(agent, tokenVerifier, tokenIntrospection, em, recordingLogger)
       calls.length = 0
 
       const request = {
@@ -214,6 +214,8 @@ describe('AuthService', () => {
 
       await service.validateRequestToken(request)
 
+      // The token reaches the introspection check but none of the AuthService log calls
+      expect(tokenIntrospection.assertTokenActive).toHaveBeenCalledWith('my-jwt')
       const logged = JSON.stringify(calls)
       expect(logged).not.toContain('my-jwt')
       expect(logged).not.toContain('authorization')
