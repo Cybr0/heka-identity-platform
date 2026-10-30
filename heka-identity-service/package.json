@@ -39,7 +39,7 @@
     "@credo-ts/askar": "0.7.3",
     "@credo-ts/core": "0.7.3",
     "@credo-ts/didcomm": "0.7.3",
-    "@credo-ts/hedera": "0.7.3",
+    "@credo-ts/hedera": "patch:@credo-ts/hedera@npm%3A0.7.3#~/.yarn/patches/@credo-ts-hedera-npm-0.7.3-cf369ae4ca.patch",
     "@credo-ts/indy-vdr": "0.7.3",
     "@credo-ts/node": "0.7.3",
     "@credo-ts/openid4vc": "0.7.3",

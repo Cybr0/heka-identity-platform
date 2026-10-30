@@ -3056,6 +3056,26 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@credo-ts/hedera@patch:@credo-ts/hedera@npm%3A0.7.3#~/.yarn/patches/@credo-ts-hedera-npm-0.7.3-cf369ae4ca.patch":
+  version: 0.7.3
+  resolution: "@credo-ts/hedera@patch:@credo-ts/hedera@npm%3A0.7.3#~/.yarn/patches/@credo-ts-hedera-npm-0.7.3-cf369ae4ca.patch::version=0.7.3&hash=6b730f"
+  dependencies:
+    "@credo-ts/anoncreds": "npm:0.7.3"
+    "@credo-ts/core": "npm:0.7.3"
+    "@hashgraph/sdk": "npm:^2.80.0"
+    "@hiero-did-sdk/anoncreds": "npm:^0.1.8"
+    "@hiero-did-sdk/cache": "npm:^0.1.8"
+    "@hiero-did-sdk/client": "npm:^0.1.8"
+    "@hiero-did-sdk/core": "npm:^0.1.8"
+    "@hiero-did-sdk/hcs": "npm:^0.1.8"
+    "@hiero-did-sdk/publisher-internal": "npm:^0.1.8"
+    "@hiero-did-sdk/registrar": "npm:^0.1.8"
+    "@hiero-did-sdk/resolver": "npm:^0.1.8"
+    buffer: "npm:^6.0.3"
+  checksum: 10/c5f5d1f09c89b64e255dbfc3a2418dc843bf8c33dcda2cffa0f8ce741c963ed7776b65d1321a29603221dc95d7b35cc044bb534792e5138e0db9c2c70c02b8c9
+  languageName: node
+  linkType: hard
+
 "@credo-ts/indy-vdr@npm:0.7.3":
   version: 0.7.3
   resolution: "@credo-ts/indy-vdr@npm:0.7.3"
@@ -13455,7 +13475,7 @@ __metadata:
     "@credo-ts/core": "npm:0.7.3"
     "@credo-ts/didcomm": "patch:@credo-ts/didcomm@npm%3A0.7.3#~/.yarn/patches/@credo-ts-didcomm-npm-0.7.3-502eb50113.patch"
     "@credo-ts/drpc": "npm:0.7.3"
-    "@credo-ts/hedera": "npm:0.7.3"
+    "@credo-ts/hedera": "patch:@credo-ts/hedera@npm%3A0.7.3#~/.yarn/patches/@credo-ts-hedera-npm-0.7.3-cf369ae4ca.patch"
     "@credo-ts/indy-vdr": "npm:0.7.3"
     "@credo-ts/openid4vc": "npm:0.7.3"
     "@credo-ts/push-notifications": "npm:0.7.1"
